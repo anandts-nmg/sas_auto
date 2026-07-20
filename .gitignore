@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Runtime artifacts (keep placeholder files only)
+logs/*
+!logs/.gitkeep
+screenshots/*
+!screenshots/.gitkeep
+state/**/*.json
+state/*.tmp
+output/*
+!output/.gitkeep

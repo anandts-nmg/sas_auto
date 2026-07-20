@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>9110 - Дарцагт</name><Style id="tender-area"><LineStyle><color>ff00ffff</color><width>2</width></LineStyle><PolyStyle><color>4000ffff</color></PolyStyle></Style><Placemark><name>9110 - Дарцагт</name><styleUrl>#tender-area</styleUrl><description>Tender: 91
+Code: 9110
+Area: Дарцагт
+Aimag: Дорнод
+Soum: Чойбалсан
+Area (ha): 104.41
+CRS: WGS84 (EPSG:4326)
+Source: https://mrpam.gov.mn/news/songon-shalgaruulalt-91-n-urilga
+The source ring contains one required closing coordinate that repeats the first vertex; the declared count excludes it.</description><ExtendedData><Data name="tender_number"><value>91</value></Data><Data name="area_code"><value>9110</value></Data><Data name="area_name"><value>Дарцагт</value></Data><Data name="placemark_name"><value>91_0010_Дарцагт</value></Data><Data name="aimag"><value>Дорнод</value></Data><Data name="soum"><value>Чойбалсан</value></Data><Data name="area_hectares"><value>104.41</value></Data><Data name="declared_coordinate_count"><value>6</value></Data><Data name="source_coordinate_count"><value>7</value></Data><Data name="unique_coordinate_count"><value>6</value></Data><Data name="geometry_type"><value>Polygon</value></Data><Data name="coordinate_system"><value>WGS84 (EPSG:4326)</value></Data><Data name="source_url"><value>https://mrpam.gov.mn/news/songon-shalgaruulalt-91-n-urilga</value></Data><Data name="polygon_closed"><value>True</value></Data><Data name="closure_note"><value>The source ring contains one required closing coordinate that repeats the first vertex; the declared count excludes it.</value></Data></ExtendedData><Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>114.81175,48.678325,0 114.81175,48.6696222222,0 114.8012055556,48.6705277778,0 114.8012055556,48.6725,0 114.7942472222,48.6725,0 114.7942472222,48.678325,0 114.81175,48.678325,0</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Document></kml>

@@ -1,0 +1,31 @@
+input_kmz: Selection_91_All_Areas.kmz
+sasplanet_exe: 'C:\Users\anand.ts\Downloads\SAS.Planet.Release.260404.x64\SASPlanet.exe'
+google_earth_exe: null
+
+dry_run: true
+area_codes:
+  - "9101"
+
+imagery:
+  preferred_sources:
+    - Google Satellite
+    - Esri World Imagery
+  zoom_levels:
+    - 15
+  buffer_percent: 10
+  download_missing_tiles_only: true
+
+export:
+  enabled: false
+  preferred_format: GeoTIFF
+  fallback_format: JPEG
+  include_georeferencing: true
+
+automation:
+  launch_timeout_seconds: 30
+  action_delay_seconds: 1
+  operation_timeout_seconds: 600
+  screenshot_on_each_step: true
+  stop_on_unexpected_dialog: true
+  max_retries: 2
+  fail_safe_corner: top_left
