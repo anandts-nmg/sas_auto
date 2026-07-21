@@ -1,11 +1,12 @@
-# SAS.Planet KMZ polygon to Z16 imagery exports
+# SAS.Planet KMZ polygon imagery downloads and raster exports
 
 This Windows project reads polygon features from KMZ files, separates them from
 point placemarks, writes native SAS.Planet saved download sessions (`.sls`), and
 exports downloaded SQLite cache tiles as polygon-masked, georeferenced rasters.
-The included `Selection_91_All_Areas.kmz` remains a strict regression dataset:
-it contains 20 tender polygons and 854 point placemarks. SAS.Planet can start
-sessions directly with:
+The repository defaults to SAS.Planet Z16. The included
+`Selection_91_All_Areas.kmz` is the strict regression dataset: it contains 20
+tender polygons and 854 point placemarks. Other polygon KMZ files and zoom
+levels are configurable. SAS.Planet starts generated sessions with:
 
 ```powershell
 SASPlanet.exe --sls-autostart 'C:\path\to\session.sls'
@@ -16,15 +17,44 @@ take screenshots, or automate Google Earth. Downloads use SAS.Planet's saved
 session format and `--sls-autostart`; export reads the configured SQLite cache
 without changing or deleting it.
 
-## Verified local environment
+The workflow has two distinct data-producing stages:
+
+1. `run` or `resume` launches SAS.Planet, which downloads tiles into its normal
+   configured cache.
+2. `export` reads those cached tiles and creates GeoTIFF/JPEG deliverables below
+   `output\`.
+
+A successful `run --confirm-download` therefore does not itself create a TIFF.
+Wait for SAS.Planet to finish, then run the matching `export` command.
+
+## Prerequisites
 
 - Windows 11 and PowerShell 7
-- Python 3.13.14 (Python 3.11 or newer is supported)
+- Python 3.11 or newer, including the Windows `py` launcher
+- SAS.Planet with `--sls-autostart` support
+- a configured SAS.Planet SQLite cache
+- an enabled SAS.Planet imagery definition, such as `ESRI ArcGIS.Imagery`
+- Node.js/npm when using `scripts\setup.ps1` or running the full documentation
+  and type-check suite
+
+Google Earth, desktop-control libraries, and administrator privileges are not
+required. Network access is used only when a confirmed SAS.Planet download is
+running and by package installation during setup.
+
+## Reference environment
+
+The repository regression workflow was last verified on 2026-07-21 with:
+
+- Windows 11 and PowerShell 7
+- Python 3.13.14
 - SAS.Planet `26.4.4.10916`:
   `C:\Users\anand.ts\Downloads\SAS.Planet.Release.260404.x64\SASPlanet.exe`
 - Installed map: `ESRI ArcGIS.Imagery`
 - Installed ESRI GUID: `{7B743985-BC5F-4AB6-8915-AC5DBBB8F552}`
 - SAS.Planet executable contains `--sls-autostart`
+
+These paths identify the checked reference machine; they are not embedded in
+the reusable scripts. Set your own executable path in `config.yaml`.
 
 Re-run the non-launching environment inspection:
 
@@ -50,15 +80,18 @@ different configuration or explicit paths without launching anything:
   -SasPlanetExe 'C:\path\to\SASPlanet.exe'
 ```
 
-## Setup
+## Clone and set up
 
 ```powershell
-Set-Location 'C:\Users\anand.ts\Downloads\sas_auto'
+git clone https://github.com/anandts-nmg/sas_auto.git
+Set-Location .\sas_auto
 .\scripts\setup.ps1
 ```
 
 Runtime dependencies are PyYAML and Pillow. The setup script also installs the
-development lint and type-check tools.
+development lint and type-check tools, PSScriptAnalyzer, and the npm-based
+Markdown/Pyright tools. It creates `.venv` and installs this package in editable
+mode.
 
 All CLI examples can be run through the PowerShell wrapper without activating
 the virtual environment:
@@ -125,18 +158,29 @@ missing or inactive, the command stops.
 `download_missing_tiles_only: true` writes `ReplaceExistTiles=0`, so existing
 cache tiles are not replaced.
 
+`dry_run: true` is a validated compatibility marker for the intended safe
+posture. Command-line authorization is the controlling gate: the current CLI
+does not launch SAS.Planet unless that same invocation includes
+`--confirm-download`.
+
+`safety` limits conservative rectangle estimates before a confirmed launch.
+`export.max_mosaic_pixels` and `export.max_mosaic_dimension` independently
+limit raster memory allocation. Raising these values is an explicit operator
+decision; the toolkit never adjusts them automatically.
+
 ### Use another KMZ
 
-Put local KMZ inputs under `inputs\`; this directory is ignored by Git so large
-or private source files are not committed. Keep the included regression input
-at the repository root.
+Put local KMZ inputs under `inputs\`; its contents except `.gitkeep` are ignored
+by Git so large or private source files are not committed. Keep the included
+regression input at the repository root.
 
 ```powershell
 Copy-Item 'C:\path\to\Selection_92_All_Areas.kmz' '.\inputs\areas.kmz'
 Copy-Item '.\config.example.yaml' '.\config.yaml' -Force
 ```
 
-Then edit only these required values in `config.yaml`:
+At minimum, set these paths in `config.yaml`; the copied example already uses
+the portable auto-detection settings shown here:
 
 ```yaml
 input_kmz: inputs/areas.kmz
@@ -147,6 +191,22 @@ dataset:
   profile: auto
   namespace_outputs: true
 ```
+
+Run `list-features`, then replace the example `area_codes` value with one or
+more detected IDs if you intend to use `--configured`. With
+`safety.pilot_feature_id: auto`, the pilot is the first configured ID that
+exists in the input, or otherwise the first verified polygon.
+
+To keep several input configurations without repeatedly replacing
+`config.yaml`, pass a config path before the subcommand:
+
+```powershell
+.\scripts\run.ps1 --config .\configs\selection-92.yaml inspect
+.\scripts\run.ps1 --config .\configs\selection-92.yaml generate
+```
+
+Relative paths inside any selected config are resolved from the repository
+root, not from the config file's directory.
 
 `profile: auto` recognizes the tender-table pattern used by selection 91 and
 similar selections such as 92. Tender codes are read from metadata; they are not
@@ -211,6 +271,22 @@ For a generic input, use `list-features` before choosing a feature ID:
 ```
 
 `--feature` and `--area` are equivalent CLI names.
+
+## Command behavior
+
+| Command | Launches SAS.Planet | Starts network download | Creates rasters |
+| --- | --- | --- | --- |
+| `inspect`, `list-features` | No | No | No |
+| `generate`, `session`, `plan` | No | No | No |
+| `run` or `run-all` without confirmation | No | No | No |
+| `run --confirm-download` or confirmed `run-all` | Yes | SAS.Planet may | No |
+| `resume` without confirmation | No | No | No |
+| `resume --confirm-download` | Yes | Per stored SLS; default missing-only | No |
+| `export` | No | No | Yes, from cache |
+| `status` | No | No | No |
+
+All commands validate `config.yaml` before doing work. `plan` writes the exact
+launch command and safety estimates for review without starting SAS.Planet.
 
 ## Generate all GIS and SLS files
 
@@ -311,8 +387,8 @@ After the pilot download finishes, export and validate it:
 .\scripts\run.ps1 export --area 9101
 ```
 
-Only after state records the pilot as `completed`, start all 20 polygons as one
-SAS.Planet session:
+Only after state records the pilot as `completed`, start all 20 regression
+polygons as one SAS.Planet session:
 
 ```powershell
 .\scripts\run.ps1 run-all --confirm-download
@@ -325,6 +401,10 @@ bounding rectangle.
 `run-all --confirm-download` and confirmed multi-feature `resume` commands are
 blocked until `safety.pilot_feature_id` has a validated raster export. Dry-run,
 session, and plan commands remain available before that gate.
+
+Planning or relaunching a scope that includes an already completed area does
+not reset that area's `completed` state. SAS.Planet still skips its existing
+tiles because the session uses `ReplaceExistTiles=0`.
 
 The CLI reports `download_launched`, not `completed`. SAS.Planet owns the actual
 tile requests and displays download completion in its progress window.
@@ -419,7 +499,8 @@ SAS.Planet data changed by a real run is its normal configured imagery cache.
 
 ## SLS fields generated
 
-The writer follows the installed SAS.Planet v26.4.4 source schema:
+The writer was verified against the installed SAS.Planet v26.4.4 saved-session
+schema:
 
 - `[Session]`
 - installed `MapGUID`
@@ -443,6 +524,10 @@ The writer follows the installed SAS.Planet v26.4.4 source schema:
 The lint command runs Ruff, Ruff formatting verification, mypy,
 Pyright/Pylance-compatible checks, yamllint, PSScriptAnalyzer, and
 markdownlint-cli2.
+
+`pytest` uses portable fixtures for SAS.Planet map definitions and executable
+capability detection. It does not require the reference machine's external
+SAS.Planet installation and never starts a download.
 
 ## Troubleshooting
 
@@ -472,6 +557,27 @@ Regenerate it without launching:
 ```
 
 Then run the matching `resume` command with explicit confirmation.
+
+### Multi-feature launch is blocked by the pilot gate
+
+Download and export the configured pilot first:
+
+```powershell
+.\scripts\run.ps1 run --area 9101 --confirm-download
+# Wait for SAS.Planet to finish.
+.\scripts\run.ps1 export --area 9101
+```
+
+Use `status` to confirm the pilot is `completed`. For arbitrary inputs, obtain
+the actual pilot ID with `list-features` and check `safety.pilot_feature_id`.
+
+### Tile-scope or mosaic safety limit is exceeded
+
+Review the JSON plan, geometry bounds, polygon parts, and configured zoom.
+Widely separated MultiPolygon parts can imply a very large rectangular raster
+even when relatively few tiles intersect the polygons. Prefer splitting such a
+feature into separate output features. Increase a safety limit only after
+estimating the required download size and image memory.
 
 ### GeoTIFF/JPEG output
 
