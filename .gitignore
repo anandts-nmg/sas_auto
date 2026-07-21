@@ -8,6 +8,8 @@ __pycache__/
 build/
 dist/
 node_modules/
+inputs/*
+!inputs/.gitkeep
 
 # Runtime artifacts (keep placeholder files only)
 logs/*

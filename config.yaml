@@ -1,6 +1,24 @@
 input_kmz: Selection_91_All_Areas.kmz
 sasplanet_exe: 'C:\Users\anand.ts\Downloads\SAS.Planet.Release.260404.x64\SASPlanet.exe'
 
+dataset:
+  id: selection_91
+  # selection_91 enforces the known 9101-9120 contract for this repository's source.
+  profile: selection_91
+  # Preserve the existing generated/, output/, and state/ layout for this dataset.
+  namespace_outputs: false
+
+parser:
+  id_fields:
+    - area_code
+    - code
+    - Код
+    - id
+  name_fields:
+    - area_name
+    - name
+    - Талбай
+
 # Commands never launch SAS.Planet without --confirm-download, regardless of this value.
 dry_run: true
 area_codes:
@@ -17,6 +35,12 @@ sessions:
   auto_close_at_finish: false
   workers_count: 1
 
+safety:
+  pilot_feature_id: "9101"
+  require_completed_pilot_before_multi_download: true
+  max_rectangle_tiles_per_feature: 100000
+  max_rectangle_tiles_total: 250000
+
 export:
   enabled: true
   directory: output
@@ -26,3 +50,5 @@ export:
   mask_to_polygon: true
   preview_max_size: 1200
   require_complete_cache: true
+  max_mosaic_pixels: 75000000
+  max_mosaic_dimension: 30000

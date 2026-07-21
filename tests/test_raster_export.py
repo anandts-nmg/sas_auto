@@ -9,9 +9,10 @@ import pytest
 from PIL import Image, ImageDraw
 
 from sas_auto.geometry import calculate_bounds, calculate_centroid
-from sas_auto.models import AreaRecord, Coordinate
+from sas_auto.models import AreaRecord, Coordinate, PolygonPart
 from sas_auto.raster_export import (
     ExportSettings,
+    _compose_raster,
     cache_database_path,
     discover_sqlite_cache_root,
     export_area_from_cache,
@@ -114,6 +115,8 @@ def _settings(tmp_path: Path) -> ExportSettings:
         mask_to_polygon=True,
         preview_max_size=512,
         require_complete_cache=True,
+        max_mosaic_pixels=75_000_000,
+        max_mosaic_dimension=30_000,
     )
 
 
@@ -123,6 +126,68 @@ def test_zoom_and_polygon_cache_coverage() -> None:
     tiles = polygon_tile_coordinates(area, 6)
     assert tiles
     assert len(tiles) == len(set(tiles))
+
+
+def test_multipolygon_tile_coverage_is_union_and_holes_reduce_scope() -> None:
+    area = _area()
+    first = list(area.coordinates)
+    second = [
+        Coordinate(10.0, 2.0),
+        Coordinate(11.0, 2.0),
+        Coordinate(11.0, 1.0),
+        Coordinate(10.0, 1.0),
+        Coordinate(10.0, 2.0),
+    ]
+    area.polygons = [PolygonPart(first)]
+    first_tiles = set(polygon_tile_coordinates(area, 10))
+    area.polygons = [PolygonPart(second)]
+    second_tiles = set(polygon_tile_coordinates(area, 10))
+    area.polygons = [PolygonPart(first), PolygonPart(second)]
+    assert set(polygon_tile_coordinates(area, 10)) == first_tiles | second_tiles
+
+    outer = [
+        Coordinate(0.0, 5.0),
+        Coordinate(5.0, 5.0),
+        Coordinate(5.0, 0.0),
+        Coordinate(0.0, 0.0),
+        Coordinate(0.0, 5.0),
+    ]
+    hole = [
+        Coordinate(1.0, 4.0),
+        Coordinate(4.0, 4.0),
+        Coordinate(4.0, 1.0),
+        Coordinate(1.0, 1.0),
+        Coordinate(1.0, 4.0),
+    ]
+    area.polygons = [PolygonPart(outer)]
+    without_hole = polygon_tile_coordinates(area, 10)
+    area.polygons = [PolygonPart(outer, [hole])]
+    with_hole = polygon_tile_coordinates(area, 10)
+    assert set(with_hole) < set(without_hole)
+
+
+def test_distant_multipolygon_is_rejected_before_mosaic_allocation() -> None:
+    area = _area()
+    distant = [
+        Coordinate(170.0, 2.0),
+        Coordinate(171.0, 2.0),
+        Coordinate(171.0, 1.0),
+        Coordinate(170.0, 1.0),
+        Coordinate(170.0, 2.0),
+    ]
+    area.polygons = [PolygonPart(list(area.coordinates)), PolygonPart(distant)]
+    area.geometry_type = "MultiPolygon"
+    tiles = polygon_tile_coordinates(area, 10)
+    with pytest.raises(ValueError, match="exceeds configured export safety limits"):
+        _compose_raster(
+            area,
+            10,
+            {},
+            tiles,
+            mask_to_polygon=True,
+            max_mosaic_pixels=1_000_000,
+            max_mosaic_dimension=1024,
+        )
 
 
 def test_export_georeferenced_raster_from_sqlite_cache(tmp_path: Path) -> None:

@@ -123,12 +123,18 @@ def detect_executable_capabilities(sasplanet_exe: Path) -> dict[str, bool]:
     return {flag: flag.encode("utf-16le") in data or flag.encode("ascii") in data for flag in flags}
 
 
-def resolve_session_settings(config: dict[str, Any], project_root: Path) -> SessionSettings:
+def resolve_session_settings(
+    config: dict[str, Any],
+    project_root: Path,
+    dataset_id: str | None = None,
+) -> SessionSettings:
     sasplanet_exe = Path(config["sasplanet_exe"])
     provider = resolve_requested_provider(sasplanet_exe, str(config["imagery"]["source"]))
     zoom_levels = tuple(sorted({int(value) for value in config["imagery"]["zoom_levels"]}))
     directory_value = Path(str(config["sessions"]["directory"]))
     session_directory = directory_value if directory_value.is_absolute() else project_root / directory_value
+    if dataset_id and bool(config["dataset"]["namespace_outputs"]):
+        session_directory /= dataset_id
     return SessionSettings(
         provider=provider,
         zoom_levels=zoom_levels,
@@ -203,17 +209,30 @@ def _session_lines(areas: list[AreaRecord], settings: SessionSettings) -> tuple[
     ]
     point_index = 0
     coordinate_count = 0
-    for area_index, area in enumerate(areas):
-        if area_index > 0:
-            lines.append(f"PointLon_{point_index}=NAN")
-            lines.append(f"PointLat_{point_index}=NAN")
-            point_index += 1
-        ring, _ = close_for_derived_output(area.coordinates)
-        for coordinate in ring:
-            lines.append(f"PointLon_{point_index}={format_number(coordinate.longitude)}")
-            lines.append(f"PointLat_{point_index}={format_number(coordinate.latitude)}")
-            point_index += 1
-            coordinate_count += 1
+    polygon_index = 0
+    for area in areas:
+        for polygon in area.polygons:
+            if polygon_index > 0:
+                lines.append(f"PointLon_{point_index}=NAN")
+                lines.append(f"PointLat_{point_index}=NAN")
+                point_index += 1
+            ring, _ = close_for_derived_output(polygon.outer)
+            for coordinate in ring:
+                lines.append(f"PointLon_{point_index}={format_number(coordinate.longitude)}")
+                lines.append(f"PointLat_{point_index}={format_number(coordinate.latitude)}")
+                point_index += 1
+                coordinate_count += 1
+            for hole in polygon.holes:
+                lines.append(f"PointLon_{point_index}=NAN")
+                lines.append(f"PointLat_{point_index}=-1")
+                point_index += 1
+                hole_ring, _ = close_for_derived_output(hole)
+                for coordinate in hole_ring:
+                    lines.append(f"PointLon_{point_index}={format_number(coordinate.longitude)}")
+                    lines.append(f"PointLat_{point_index}={format_number(coordinate.latitude)}")
+                    point_index += 1
+                    coordinate_count += 1
+            polygon_index += 1
     return lines, coordinate_count
 
 
@@ -246,7 +265,7 @@ def create_sls_session(
         provider_guid=settings.provider.guid,
         zoom_levels=settings.zoom_levels,
         area_codes=codes,
-        polygon_count=len(areas),
+        polygon_count=sum(len(area.polygons) for area in areas),
         coordinate_count=coordinate_count,
         missing_tiles_only=settings.download_missing_tiles_only,
     )
@@ -335,18 +354,51 @@ def create_download_plan(
     settings: SessionSettings,
     sasplanet_exe: Path,
     project_root: Path,
+    plan_directory: Path | None = None,
+    *,
+    max_rectangle_tiles_per_feature: int = 100_000,
+    max_rectangle_tiles_total: int = 250_000,
 ) -> dict[str, Any]:
-    estimates = [
-        {
-            "area_code": area.area_code,
-            "bounds": area.bounds.as_dict(),
-            "zooms": [{"zoom": zoom, **estimate_bbox_tiles(area.bounds, zoom)} for zoom in settings.zoom_levels],
-        }
-        for area in areas
-    ]
+    estimates: list[dict[str, Any]] = []
+    violations: list[str] = []
+    total_rectangle_tiles = 0
+    for area in areas:
+        zoom_estimates: list[dict[str, Any]] = []
+        feature_tile_count = 0
+        for sas_zoom in settings.zoom_levels:
+            web_zoom = sas_zoom - 1
+            estimate = estimate_bbox_tiles(area.bounds, web_zoom)
+            tile_count = estimate["tile_count"]
+            feature_tile_count += tile_count
+            zoom_estimates.append(
+                {
+                    "zoom": sas_zoom,
+                    "sasplanet_zoom": sas_zoom,
+                    "web_mercator_tile_matrix_zoom": web_zoom,
+                    **estimate,
+                }
+            )
+        total_rectangle_tiles += feature_tile_count
+        if feature_tile_count > max_rectangle_tiles_per_feature:
+            violations.append(
+                f"Feature {area.area_code} rectangle estimate is {feature_tile_count:,} tiles; "
+                f"limit is {max_rectangle_tiles_per_feature:,}."
+            )
+        estimates.append(
+            {
+                "area_code": area.area_code,
+                "bounds": area.bounds.as_dict(),
+                "zooms": zoom_estimates,
+                "total_rectangle_tiles": feature_tile_count,
+            }
+        )
+    if total_rectangle_tiles > max_rectangle_tiles_total:
+        violations.append(
+            f"Combined rectangle estimate is {total_rectangle_tiles:,} tiles; limit is {max_rectangle_tiles_total:,}."
+        )
     command = sasplanet_command(sasplanet_exe, Path(artifact.path))
     plan: dict[str, Any] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "mode": "sls-autostart",
         "network_download_started": False,
         "session": artifact.as_dict(),
@@ -355,12 +407,20 @@ def create_download_plan(
         "executable_capabilities": detect_executable_capabilities(sasplanet_exe),
         "selection": "exact polygon geometry encoded in SLS",
         "rectangle_tile_estimates": estimates,
+        "safety": {
+            "within_limits": not violations,
+            "max_rectangle_tiles_per_feature": max_rectangle_tiles_per_feature,
+            "max_rectangle_tiles_total": max_rectangle_tiles_total,
+            "total_rectangle_tiles": total_rectangle_tiles,
+            "violations": violations,
+        },
         "resume_behavior": (
             "Relaunching the same SLS re-enumerates the polygon but skips cached tiles because ReplaceExistTiles=0."
         ),
         "desktop_automation": False,
     }
-    plan_path = project_root / "state" / "plans" / f"{Path(artifact.path).stem}.json"
+    plans_root = plan_directory or (project_root / "state" / "plans")
+    plan_path = plans_root / f"{Path(artifact.path).stem}.json"
     plan["plan_path"] = str(plan_path.resolve())
     atomic_write_json(plan_path, plan)
     return plan

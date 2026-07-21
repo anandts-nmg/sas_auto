@@ -46,6 +46,8 @@ class ExportSettings:
     mask_to_polygon: bool
     preview_max_size: int
     require_complete_cache: bool
+    max_mosaic_pixels: int
+    max_mosaic_dimension: int
 
 
 @dataclass(frozen=True, order=True)
@@ -74,11 +76,17 @@ class CacheInventory:
     tile_bytes: int
 
 
-def resolve_export_settings(config: dict[str, Any], project_root: Path) -> ExportSettings:
+def resolve_export_settings(
+    config: dict[str, Any],
+    project_root: Path,
+    dataset_id: str | None = None,
+) -> ExportSettings:
     value = config["export"]
     directory = Path(str(value["directory"]))
     if not directory.is_absolute():
         directory = project_root / directory
+    if dataset_id and bool(config["dataset"]["namespace_outputs"]):
+        directory /= dataset_id
     return ExportSettings(
         output_directory=directory.resolve(),
         preferred_format=str(value["preferred_format"]),
@@ -87,6 +95,8 @@ def resolve_export_settings(config: dict[str, Any], project_root: Path) -> Expor
         mask_to_polygon=bool(value["mask_to_polygon"]),
         preview_max_size=int(value["preview_max_size"]),
         require_complete_cache=bool(value["require_complete_cache"]),
+        max_mosaic_pixels=int(value["max_mosaic_pixels"]),
+        max_mosaic_dimension=int(value["max_mosaic_dimension"]),
     )
 
 
@@ -205,20 +215,42 @@ def _tile_intersects_polygon(x: int, y: int, ring: list[tuple[float, float]]) ->
     )
 
 
+def _tile_fully_inside_ring(x: int, y: int, ring: list[tuple[float, float]]) -> bool:
+    corners = [(float(x), float(y)), (x + 1.0, float(y)), (x + 1.0, y + 1.0), (float(x), y + 1.0)]
+    if not all(_point_in_polygon(corner, ring) for corner in corners):
+        return False
+    tile_edges = list(pairwise([*corners, corners[0]]))
+    return not any(
+        _segments_intersect(ring_start, ring_end, tile_start, tile_end)
+        for ring_start, ring_end in pairwise(ring)
+        for tile_start, tile_end in tile_edges
+    )
+
+
 def polygon_tile_coordinates(area: AreaRecord, sas_zoom: int) -> tuple[TileCoordinate, ...]:
     web_zoom = sas_zoom_to_web_zoom(sas_zoom)
-    closed, _ = close_for_derived_output(area.coordinates)
-    tile_ring = [lonlat_to_fractional_tile(item.longitude, item.latitude, web_zoom) for item in closed]
-    min_x = math.floor(min(point[0] for point in tile_ring))
-    max_x = math.floor(max(point[0] for point in tile_ring))
-    min_y = math.floor(min(point[1] for point in tile_ring))
-    max_y = math.floor(max(point[1] for point in tile_ring))
-    return tuple(
-        TileCoordinate(x, y)
-        for x in range(min_x, max_x + 1)
-        for y in range(min_y, max_y + 1)
-        if _tile_intersects_polygon(x, y, tile_ring)
-    )
+    selected: set[TileCoordinate] = set()
+    for polygon in area.polygons:
+        closed, _ = close_for_derived_output(polygon.outer)
+        tile_ring = [lonlat_to_fractional_tile(item.longitude, item.latitude, web_zoom) for item in closed]
+        hole_rings = []
+        for hole in polygon.holes:
+            closed_hole, _ = close_for_derived_output(hole)
+            hole_rings.append(
+                [lonlat_to_fractional_tile(item.longitude, item.latitude, web_zoom) for item in closed_hole]
+            )
+        min_x = math.floor(min(point[0] for point in tile_ring))
+        max_x = math.floor(max(point[0] for point in tile_ring))
+        min_y = math.floor(min(point[1] for point in tile_ring))
+        max_y = math.floor(max(point[1] for point in tile_ring))
+        selected.update(
+            TileCoordinate(x, y)
+            for x in range(min_x, max_x + 1)
+            for y in range(min_y, max_y + 1)
+            if _tile_intersects_polygon(x, y, tile_ring)
+            and not any(_tile_fully_inside_ring(x, y, hole_ring) for hole_ring in hole_rings)
+        )
+    return tuple(sorted(selected))
 
 
 def cache_database_path(cache_root: Path, cache_name: str, sas_zoom: int, tile: TileCoordinate) -> Path:
@@ -364,27 +396,44 @@ def _compose_raster(
     expected_tiles: tuple[TileCoordinate, ...],
     *,
     mask_to_polygon: bool,
+    max_mosaic_pixels: int,
+    max_mosaic_dimension: int,
 ) -> tuple[Image.Image, RasterBounds, Bounds]:
     web_zoom = sas_zoom_to_web_zoom(sas_zoom)
     min_tile_x = min(tile.x for tile in expected_tiles)
     max_tile_x = max(tile.x for tile in expected_tiles)
     min_tile_y = min(tile.y for tile in expected_tiles)
     max_tile_y = max(tile.y for tile in expected_tiles)
-    mosaic = Image.new(
-        "RGBA",
-        ((max_tile_x - min_tile_x + 1) * TILE_SIZE, (max_tile_y - min_tile_y + 1) * TILE_SIZE),
-        (0, 0, 0, 0),
-    )
+    mosaic_width = (max_tile_x - min_tile_x + 1) * TILE_SIZE
+    mosaic_height = (max_tile_y - min_tile_y + 1) * TILE_SIZE
+    mosaic_pixels = mosaic_width * mosaic_height
+    if mosaic_width > max_mosaic_dimension or mosaic_height > max_mosaic_dimension or mosaic_pixels > max_mosaic_pixels:
+        raise ValueError(
+            f"Refusing raster mosaic for {area.area_code}: {mosaic_width:,} x {mosaic_height:,} "
+            f"({mosaic_pixels:,} pixels) exceeds configured export safety limits "
+            f"({max_mosaic_dimension:,} maximum dimension, {max_mosaic_pixels:,} pixels). "
+            "Split distant polygon parts or raise the limits explicitly after reviewing memory requirements."
+        )
+    mosaic = Image.new("RGBA", (mosaic_width, mosaic_height), (0, 0, 0, 0))
     for tile, image in images.items():
         offset = ((tile.x - min_tile_x) * TILE_SIZE, (tile.y - min_tile_y) * TILE_SIZE)
         mosaic.paste(image.convert("RGBA"), offset)
 
-    closed, _ = close_for_derived_output(area.coordinates)
-    fractional_ring = [lonlat_to_fractional_tile(item.longitude, item.latitude, web_zoom) for item in closed]
-    global_min_x = math.floor(min(point[0] * TILE_SIZE for point in fractional_ring))
-    global_max_x = math.ceil(max(point[0] * TILE_SIZE for point in fractional_ring))
-    global_min_y = math.floor(min(point[1] * TILE_SIZE for point in fractional_ring))
-    global_max_y = math.ceil(max(point[1] * TILE_SIZE for point in fractional_ring))
+    fractional_polygons: list[tuple[list[tuple[float, float]], list[list[tuple[float, float]]]]] = []
+    all_outer_points: list[tuple[float, float]] = []
+    for polygon in area.polygons:
+        closed, _ = close_for_derived_output(polygon.outer)
+        outer = [lonlat_to_fractional_tile(item.longitude, item.latitude, web_zoom) for item in closed]
+        holes: list[list[tuple[float, float]]] = []
+        for hole in polygon.holes:
+            closed_hole, _ = close_for_derived_output(hole)
+            holes.append([lonlat_to_fractional_tile(item.longitude, item.latitude, web_zoom) for item in closed_hole])
+        fractional_polygons.append((outer, holes))
+        all_outer_points.extend(outer)
+    global_min_x = math.floor(min(point[0] * TILE_SIZE for point in all_outer_points))
+    global_max_x = math.ceil(max(point[0] * TILE_SIZE for point in all_outer_points))
+    global_min_y = math.floor(min(point[1] * TILE_SIZE for point in all_outer_points))
+    global_max_y = math.ceil(max(point[1] * TILE_SIZE for point in all_outer_points))
     mosaic_origin_x = min_tile_x * TILE_SIZE
     mosaic_origin_y = min_tile_y * TILE_SIZE
     crop_box = (
@@ -397,14 +446,27 @@ def _compose_raster(
 
     if mask_to_polygon:
         mask = Image.new("L", raster.size, 0)
-        local_ring = [
-            (
-                round(point[0] * TILE_SIZE - global_min_x),
-                round(point[1] * TILE_SIZE - global_min_y),
-            )
-            for point in fractional_ring
-        ]
-        ImageDraw.Draw(mask).polygon(local_ring, fill=255)
+        for outer, holes in fractional_polygons:
+            part_mask = Image.new("L", raster.size, 0)
+            draw = ImageDraw.Draw(part_mask)
+            local_outer = [
+                (
+                    round(point[0] * TILE_SIZE - global_min_x),
+                    round(point[1] * TILE_SIZE - global_min_y),
+                )
+                for point in outer
+            ]
+            draw.polygon(local_outer, fill=255)
+            for fractional_hole in holes:
+                local_hole = [
+                    (
+                        round(point[0] * TILE_SIZE - global_min_x),
+                        round(point[1] * TILE_SIZE - global_min_y),
+                    )
+                    for point in fractional_hole
+                ]
+                draw.polygon(local_hole, fill=0)
+            mask = ImageChops.lighter(mask, part_mask)
         existing_alpha = raster.getchannel("A")
         raster.putalpha(ImageChops.multiply(existing_alpha, mask))
 
@@ -605,6 +667,8 @@ def export_area_from_cache(
         images,
         expected_tiles,
         mask_to_polygon=settings.mask_to_polygon,
+        max_mosaic_pixels=settings.max_mosaic_pixels,
+        max_mosaic_dimension=settings.max_mosaic_dimension,
     )
     raster_path, raster_format, companions, fallback_warning = _write_raster(
         raster,

@@ -1,5 +1,25 @@
-input_kmz: Selection_91_All_Areas.kmz
+input_kmz: inputs/areas.kmz
 sasplanet_exe: 'C:\path\to\SAS.Planet\SASPlanet.exe'
+
+dataset:
+  # auto derives a stable dataset name from the KMZ filename and content hash.
+  id: auto
+  # auto recognizes 91-style tender metadata and otherwise uses generic polygons.
+  profile: auto
+  # Keep multiple KMZ runs isolated under generated/, output/, state/, and generated/sls/.
+  namespace_outputs: true
+
+parser:
+  # Checked in order for generic polygon feature IDs and display names.
+  id_fields:
+    - area_code
+    - code
+    - Код
+    - id
+  name_fields:
+    - area_name
+    - name
+    - Талбай
 
 # Commands never launch SAS.Planet without --confirm-download, regardless of this value.
 dry_run: true
@@ -17,6 +37,13 @@ sessions:
   auto_close_at_finish: false
   workers_count: 1
 
+safety:
+  # auto uses the first configured feature ID that exists, then the first polygon.
+  pilot_feature_id: auto
+  require_completed_pilot_before_multi_download: true
+  max_rectangle_tiles_per_feature: 100000
+  max_rectangle_tiles_total: 250000
+
 export:
   enabled: true
   directory: output
@@ -26,3 +53,5 @@ export:
   mask_to_polygon: true
   preview_max_size: 1200
   require_complete_cache: true
+  max_mosaic_pixels: 75000000
+  max_mosaic_dimension: 30000

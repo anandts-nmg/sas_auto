@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sas-auto"
-version = "0.3.0"
-description = "KMZ-to-SAS.Planet Z16 download and georeferenced raster export automation for Windows"
+version = "0.4.0"
+description = "KMZ polygon-to-SAS.Planet download and georeferenced raster export automation for Windows"
 requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0.2,<7",
