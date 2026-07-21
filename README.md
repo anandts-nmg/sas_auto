@@ -1,17 +1,19 @@
-# SAS.Planet KMZ to Z16 download sessions
+# SAS.Planet KMZ to Z16 imagery exports
 
 This Windows project validates `Selection_91_All_Areas.kmz`, separates its 20
-tender-area polygons from the 854 point placemarks, and writes native
-SAS.Planet saved download sessions (`.sls`). SAS.Planet can start those sessions
-directly with:
+tender-area polygons from the 854 point placemarks, writes native SAS.Planet
+saved download sessions (`.sls`), and exports downloaded SQLite cache tiles as
+polygon-masked, georeferenced rasters. SAS.Planet can start sessions directly
+with:
 
 ```powershell
 SASPlanet.exe --sls-autostart 'C:\path\to\session.sls'
 ```
 
 The project does not drive the desktop, click controls, use screen coordinates,
-take screenshots, or automate Google Earth. It relies only on SAS.Planet's saved
-session format and documented `--sls-autostart` command-line option.
+take screenshots, or automate Google Earth. Downloads use SAS.Planet's saved
+session format and `--sls-autostart`; export reads the configured SQLite cache
+without changing or deleting it.
 
 ## Verified local environment
 
@@ -43,7 +45,7 @@ Set-Location 'C:\Users\anand.ts\Downloads\sas_auto'
 .\scripts\setup.ps1
 ```
 
-The runtime dependency is only PyYAML. The setup script also installs the
+Runtime dependencies are PyYAML and Pillow. The setup script also installs the
 development lint and type-check tools.
 
 All CLI examples can be run through the PowerShell wrapper without activating
@@ -75,6 +77,16 @@ sessions:
   directory: generated/sls
   auto_close_at_finish: false
   workers_count: 1
+
+export:
+  enabled: true
+  directory: output
+  preferred_format: GeoTIFF
+  fallback_format: JPEG
+  include_georeferencing: true
+  mask_to_polygon: true
+  preview_max_size: 1200
+  require_complete_cache: true
 ```
 
 `Esri World Imagery` resolves to the installed SAS.Planet map named
@@ -209,14 +221,65 @@ The session re-enumerates its polygon tiles, but `ReplaceExistTiles=0` makes
 SAS.Planet skip tiles already present in its configured cache and request only
 missing tiles. The toolkit never deletes or rewrites cache contents.
 
+## Export and validate cached imagery
+
+After SAS.Planet finishes the pilot download, export area `9101` without making
+any network requests:
+
+```powershell
+.\scripts\run.ps1 export --area 9101
+```
+
+The exporter discovers `SQLiteCache` from `SASPlanet.ini`, resolves
+`NameInCache` from the selected provider's `params.txt`, and requires every tile
+intersecting the verified polygon. It then creates:
+
+```text
+output\9101\9101.tif
+output\9101\9101.tfw
+output\9101\9101.prj
+output\9101\preview.png
+output\9101\validation.json
+output\9101\run-summary.txt
+```
+
+The GeoTIFF contains embedded EPSG:3857 pixel scale, tie point, and CRS keys. The
+world and projection sidecars are also written for compatibility. Pixels outside
+the tender polygon are transparent.
+
+Validation checks the tile inventory, image decoding, raster dimensions and
+content variation, polygon coverage, raster bounds, georeferencing, and output
+hashes. Workflow state is marked `completed` only after every check passes.
+
+After all 20 cache downloads are available, export them sequentially:
+
+```powershell
+.\scripts\run.ps1 export --all
+```
+
+An all-area export continues past areas with missing cache tiles, records them as
+failed, and creates these aggregate files:
+
+```text
+output\batch-summary.csv
+output\batch-summary.json
+output\batch-report.md
+output\checksums.sha256
+output\file-inventory.csv
+```
+
+Use `--configured` instead of `--all` to export only codes listed in
+`config.yaml`.
+
 ## State and logs
 
 ```powershell
 .\scripts\run.ps1 status
 ```
 
-Launch state is written atomically to `state\workflow.json`. Plans are under
-`state\plans\`, and command logs are under `logs\`.
+Launch and validated-export state is written atomically to
+`state\workflow.json`. Plans are under `state\plans\`, and command logs are
+under `logs\`.
 
 The input KMZ and SAS.Planet `Maps` definitions are always read-only. The only
 SAS.Planet data changed by a real run is its normal configured imagery cache.
@@ -278,6 +341,16 @@ Then run the matching `resume` command with explicit confirmation.
 
 ### GeoTIFF/JPEG output
 
-This direct workflow downloads imagery into the SAS.Planet cache. It does not
-automate the desktop stitching/export dialog. Export is intentionally outside
-this repository's current scope.
+If export reports missing tiles, first resume the matching download and wait for
+SAS.Planet to finish:
+
+```powershell
+.\scripts\run.ps1 resume --area 9101 --confirm-download
+.\scripts\run.ps1 export --area 9101
+```
+
+The exporter refuses incomplete or corrupt cache coverage by default. It never
+silently fills missing tiles, switches providers, or marks a partial raster as
+complete. If GeoTIFF encoding itself fails, the configured JPEG fallback is
+written with `.jgw` and `.prj` georeferencing files and the fallback is recorded
+in validation output.

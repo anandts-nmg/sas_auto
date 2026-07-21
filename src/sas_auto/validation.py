@@ -158,6 +158,26 @@ def validate_config(config: dict[str, Any], project_root: Path) -> list[str]:
         workers_count = sessions.get("workers_count")
         if type(workers_count) is not int or not 1 <= workers_count <= 32:
             errors.append("sessions.workers_count must be an integer from 1 through 32")
+    export = config.get("export")
+    if not isinstance(export, dict):
+        errors.append("export must be a mapping")
+    else:
+        if not isinstance(export.get("enabled"), bool):
+            errors.append("export.enabled must be true or false")
+        export_directory = export.get("directory")
+        if not isinstance(export_directory, str) or not export_directory.strip():
+            errors.append("export.directory must be a non-empty path")
+        supported_formats = {"geotiff", "jpeg"}
+        for key in ("preferred_format", "fallback_format"):
+            format_value = export.get(key)
+            if not isinstance(format_value, str) or format_value.casefold() not in supported_formats:
+                errors.append(f"export.{key} must be GeoTIFF or JPEG")
+        for key in ("include_georeferencing", "mask_to_polygon", "require_complete_cache"):
+            if not isinstance(export.get(key), bool):
+                errors.append(f"export.{key} must be true or false")
+        preview_max_size = export.get("preview_max_size")
+        if type(preview_max_size) is not int or not 128 <= preview_max_size <= 4096:
+            errors.append("export.preview_max_size must be an integer from 128 through 4096")
     input_value = config.get("input_kmz")
     if not isinstance(input_value, str) or not input_value.strip():
         errors.append("input_kmz must be a path")

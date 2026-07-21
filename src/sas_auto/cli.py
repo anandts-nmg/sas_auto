@@ -13,6 +13,7 @@ from .config import load_config, resolve_project_path
 from .kmz_parser import generate_outputs, inspect_kmz
 from .logging_setup import configure_logging
 from .models import AreaRecord, InspectionResult
+from .raster_export import export_area_from_cache, resolve_export_settings, write_batch_outputs
 from .sasplanet import (
     SessionArtifact,
     SessionSettings,
@@ -290,6 +291,73 @@ def command_status(args: argparse.Namespace, config: dict[str, Any], root: Path)
     return 0
 
 
+def command_export(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
+    if not bool(config["export"]["enabled"]):
+        raise ValueError("Raster export is disabled by export.enabled in config.yaml")
+    result = _load_inventory(config, root)
+    _require_valid_inventory(result)
+    areas = _scope_from_args(args, result, config)
+    session_settings = resolve_session_settings(config, root)
+    if len(session_settings.zoom_levels) != 1:
+        raise ValueError("Raster export currently requires exactly one configured imagery.zoom_levels value")
+    export_settings = resolve_export_settings(config, root)
+    state = WorkflowState(root / "state" / "workflow.json")
+    completed: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
+    for area in areas:
+        try:
+            validation = export_area_from_cache(
+                area,
+                Path(config["sasplanet_exe"]),
+                session_settings.provider,
+                session_settings.zoom_levels[0],
+                export_settings,
+            )
+            if validation["validation_status"] != "passed":
+                raise ValueError(f"Raster validation failed for area {area.area_code}")
+            output_paths = [str(path) for path in validation["output_paths"]]
+            state.record_area(
+                area.area_code,
+                "completed",
+                provider=session_settings.provider.name,
+                zoom_levels=list(session_settings.zoom_levels),
+                output_paths=output_paths,
+                details={
+                    "validation_path": validation["validation_path"],
+                    "raster_path": validation["raster"]["path"],
+                    "cached_tile_count": validation["cache"]["cached_tile_count"],
+                    "missing_tile_count": validation["cache"]["missing_tile_count"],
+                },
+            )
+            completed.append(validation)
+        except Exception as error:
+            state.record_area(
+                area.area_code,
+                "failed",
+                provider=session_settings.provider.name,
+                zoom_levels=list(session_settings.zoom_levels),
+                error=str(error),
+                details={"stage": "cache_to_raster_export"},
+            )
+            failed.append({"area_code": area.area_code, "error": str(error)})
+            if len(areas) == 1:
+                raise
+
+    batch_outputs = write_batch_outputs(export_settings.output_directory, list(result.areas))
+    print(
+        _json(
+            {
+                "status": "completed" if not failed else "completed_with_failures",
+                "network_download_started": False,
+                "completed": completed,
+                "failed": failed,
+                "batch_outputs": batch_outputs,
+            }
+        )
+    )
+    return 1 if failed else 0
+
+
 def _add_scope_arguments(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--area", choices=sorted(EXPECTED_AREA_CODES))
@@ -329,6 +397,8 @@ def build_parser() -> argparse.ArgumentParser:
     resume = subparsers.add_parser("resume", help="Relaunch an existing SLS; cached tiles are skipped")
     _add_scope_arguments(resume)
     resume.add_argument("--confirm-download", action="store_true")
+    export = subparsers.add_parser("export", help="Export and validate cached tiles as georeferenced rasters")
+    _add_scope_arguments(export)
     subparsers.add_parser("status", help="Show persisted launch state")
     return parser
 
@@ -341,6 +411,7 @@ COMMANDS = {
     "run": command_run,
     "run-all": command_run_all,
     "resume": command_resume,
+    "export": command_export,
     "status": command_status,
 }
 

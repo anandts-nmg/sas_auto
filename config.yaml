@@ -16,3 +16,13 @@ sessions:
   directory: generated/sls
   auto_close_at_finish: false
   workers_count: 1
+
+export:
+  enabled: true
+  directory: output
+  preferred_format: GeoTIFF
+  fallback_format: JPEG
+  include_georeferencing: true
+  mask_to_polygon: true
+  preview_max_size: 1200
+  require_complete_cache: true
