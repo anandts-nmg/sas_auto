@@ -34,58 +34,57 @@ if (Test-Path -LiteralPath $kmzPath -PathType Leaf) {
     }
 }
 
-$shortcutRoots = @(
-    [Environment]::GetFolderPath('Desktop'),
-    [Environment]::GetFolderPath('CommonDesktopDirectory'),
-    [Environment]::GetFolderPath('StartMenu'),
-    [Environment]::GetFolderPath('CommonStartMenu')
-) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
-
-$shell = New-Object -ComObject WScript.Shell
-$shortcutRecords = @(
-    Get-ChildItem -LiteralPath $shortcutRoots -Filter '*.lnk' -File -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '(?i)google.*earth|earth.*pro' } |
-        ForEach-Object {
-            $shortcut = $shell.CreateShortcut($_.FullName)
-            [ordered]@{ shortcut = $_.FullName; target = $shortcut.TargetPath; arguments = $shortcut.Arguments }
-        }
-)
-
-$earthCandidates = @(
-    'C:\Program Files\Google\Google Earth Pro\client\googleearth.exe',
-    'C:\Program Files (x86)\Google\Google Earth Pro\client\googleearth.exe',
-    (Join-Path $env:LOCALAPPDATA 'Google\Google Earth Pro\client\googleearth.exe')
-) + @($shortcutRecords | ForEach-Object target)
-$earthPath = $earthCandidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
-
-$sasInfo = if (Test-Path -LiteralPath $sasPath -PathType Leaf) {
-    $item = Get-Item -LiteralPath $sasPath
-    [ordered]@{ path = $item.FullName; version = $item.VersionInfo.FileVersion; length = $item.Length }
-} else { $null }
-$earthInfo = if ($earthPath) {
-    $item = Get-Item -LiteralPath $earthPath
-    [ordered]@{ path = $item.FullName; version = $item.VersionInfo.FileVersion; length = $item.Length }
-} else { $null }
+$sasInfo = $null
+$esriDefinitions = @()
+if (Test-Path -LiteralPath $sasPath -PathType Leaf) {
+    $sasItem = Get-Item -LiteralPath $sasPath
+    $binary = [System.IO.File]::ReadAllBytes($sasPath)
+    $asciiText = [System.Text.Encoding]::ASCII.GetString($binary)
+    $unicodeText = [System.Text.Encoding]::Unicode.GetString($binary)
+    $mapsRoot = Join-Path $sasItem.DirectoryName 'Maps'
+    $esriDefinitions = @(
+        Get-ChildItem -LiteralPath $mapsRoot -Recurse -File -Filter 'params.txt' -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $text = Get-Content -LiteralPath $_.FullName -Raw
+                if ($text -match '(?im)^\s*name\s*=\s*(ESRI ArcGIS\.Imagery|Esri World Imagery)\s*$') {
+                    $guidMatch = [regex]::Match($text, '(?im)^\s*guid\s*=\s*(\{[0-9a-f-]{36}\})\s*$')
+                    if ($guidMatch.Success) {
+                        [ordered]@{
+                            name = $Matches[1]
+                            guid = $guidMatch.Groups[1].Value.ToUpperInvariant()
+                            params_path = $_.FullName
+                        }
+                    }
+                }
+            }
+    )
+    $sasInfo = [ordered]@{
+        path = $sasItem.FullName
+        version = $sasItem.VersionInfo.FileVersion
+        length = $sasItem.Length
+        maps_directory = $mapsRoot
+        sls_autostart = $asciiText.Contains('--sls-autostart') -or $unicodeText.Contains('--sls-autostart')
+    }
+}
 
 $report = [ordered]@{
     inspected_at = (Get-Date).ToUniversalTime().ToString('o')
     project_root = $projectRoot
-    directory_entries = @(Get-ChildItem -LiteralPath $projectRoot -Force | ForEach-Object Name)
     python = [ordered]@{ launcher = $pythonCommand.Source; version = $pythonVersion }
     kmz = $kmzInfo
     sasplanet = $sasInfo
-    google_earth = $earthInfo
-    google_earth_shortcuts = $shortcutRecords
+    esri_imagery_definitions = $esriDefinitions
     applications_launched = $false
 }
 
 if ($AsJson) {
     $report | ConvertTo-Json -Depth 8
-} else {
+}
+else {
     $report | Format-List
-    Write-Host "Python: $pythonVersion"
-    Write-Host "KMZ: $($kmzInfo.path) (doc.kml=$($kmzInfo.contains_doc_kml))"
-    Write-Host "SAS.Planet: $($sasInfo.path)"
-    Write-Host "Google Earth Pro: $($earthInfo.path)"
-    Write-Host 'No application was launched or modified.'
+    Write-Output "Python: $pythonVersion"
+    Write-Output "KMZ: $($kmzInfo.path) (doc.kml=$($kmzInfo.contains_doc_kml))"
+    Write-Output "SAS.Planet: $($sasInfo.path) (--sls-autostart=$($sasInfo.sls_autostart))"
+    Write-Output "ESRI ArcGIS.Imagery definitions: $($esriDefinitions.Count)"
+    Write-Output 'No application was launched or modified.'
 }

@@ -1,23 +1,31 @@
-"""Command-line interface for inspection, generation, planning, and safe execution."""
+"""Command-line interface for KMZ validation and SAS.Planet SLS downloads."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
-from .calibration import calibrate_sasplanet
 from .config import load_config, resolve_project_path
-from .earth_pro import generated_kml_path, locate_google_earth, open_for_verification
 from .kmz_parser import generate_outputs, inspect_kmz
 from .logging_setup import configure_logging
 from .models import AreaRecord, InspectionResult
-from .sasplanet import create_area_plan
+from .sasplanet import (
+    SessionArtifact,
+    SessionSettings,
+    create_download_plan,
+    create_sls_session,
+    launch_sls_session,
+    resolve_session_settings,
+    sasplanet_command,
+    session_path_for,
+    validate_sls_session,
+)
 from .state import WorkflowState
-from .ui_driver import CalibrationRequired, SASPlanetUIDriver, UnexpectedWindow
-from .validation import EXPECTED_AREA_CODES, validate_output_files
+from .validation import EXPECTED_AREA_CODES
 
 
 def _json(value: Any) -> str:
@@ -33,7 +41,13 @@ def _configure_windows_console() -> None:
 
 
 def _load_inventory(config: dict[str, Any], root: Path) -> InspectionResult:
-    return inspect_kmz(resolve_project_path(config["input_kmz"], root))
+    return inspect_kmz(resolve_project_path(str(config["input_kmz"]), root))
+
+
+def _require_valid_inventory(result: InspectionResult) -> None:
+    if result.errors:
+        messages = "; ".join(message.message for message in result.errors)
+        raise ValueError(f"SLS generation refused because KMZ validation failed: {messages}")
 
 
 def _find_area(result: InspectionResult, area_code: str) -> AreaRecord:
@@ -60,17 +74,61 @@ def _inventory_summary(result: InspectionResult) -> dict[str, Any]:
     }
 
 
-def _plan_one(
-    result: InspectionResult, config: dict[str, Any], root: Path, area_code: str
-) -> dict[str, Any]:
-    if area_code not in EXPECTED_AREA_CODES:
-        raise ValueError(f"Unsupported area code: {area_code}")
-    kml_path = root / "generated" / "kml" / f"{area_code}.kml"
-    if not kml_path.is_file():
-        raise FileNotFoundError(f"Generated KML missing: {kml_path}. Run `python -m sas_auto.cli generate`.")
-    area = _find_area(result, area_code)
-    sasplanet_exe = Path(config["sasplanet_exe"])
-    return create_area_plan(area, config, root, sasplanet_exe)
+def _select_areas(
+    result: InspectionResult,
+    config: dict[str, Any],
+    *,
+    area_code: str | None,
+    all_areas: bool,
+    configured: bool,
+) -> list[AreaRecord]:
+    if all_areas:
+        return list(result.areas)
+    if configured:
+        return [_find_area(result, str(code)) for code in config["area_codes"]]
+    if area_code is None:
+        raise ValueError("Choose --area, --configured, or --all")
+    return [_find_area(result, area_code)]
+
+
+def _scope_from_args(args: argparse.Namespace, result: InspectionResult, config: dict[str, Any]) -> list[AreaRecord]:
+    return _select_areas(
+        result,
+        config,
+        area_code=getattr(args, "area", None),
+        all_areas=bool(getattr(args, "all", False)),
+        configured=bool(getattr(args, "configured", False)),
+    )
+
+
+def _prepare_scope(
+    areas: list[AreaRecord],
+    config: dict[str, Any],
+    root: Path,
+    settings: SessionSettings | None = None,
+) -> tuple[SessionArtifact, SessionSettings, dict[str, Any]]:
+    resolved_settings = settings or resolve_session_settings(config, root)
+    artifact = create_sls_session(areas, resolved_settings)
+    plan = create_download_plan(artifact, areas, resolved_settings, Path(config["sasplanet_exe"]), root)
+    return artifact, resolved_settings, plan
+
+
+def _record_scope(
+    state: WorkflowState,
+    areas: list[AreaRecord],
+    status: str,
+    artifact: SessionArtifact,
+    details: dict[str, Any],
+) -> None:
+    for area in areas:
+        state.record_area(
+            area.area_code,
+            status,
+            provider=artifact.provider_name,
+            zoom_levels=list(artifact.zoom_levels),
+            output_paths=[artifact.path],
+            details=details,
+        )
 
 
 def command_inspect(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
@@ -81,152 +139,148 @@ def command_inspect(args: argparse.Namespace, config: dict[str, Any], root: Path
 
 def command_generate(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
     result = _load_inventory(config, root)
+    _require_valid_inventory(result)
     outputs = generate_outputs(result, root)
-    print(_json({"generated": outputs, "inventory": _inventory_summary(result)}))
-    return 0
-
-
-def command_earth_open(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
-    executable = locate_google_earth(config.get("google_earth_exe"))
-    if executable is None:
-        raise FileNotFoundError("Google Earth Pro was not found. Run scripts\\inspect_environment.ps1 and update config.yaml.")
-    path = generated_kml_path(root, args.area, args.all)
-    process_id = open_for_verification(executable, path)
-    print(_json({"executable": str(executable), "kml": str(path.resolve()), "process_id": process_id,
-                 "purpose": "manual visual verification only"}))
-    return 0
-
-
-def command_calibrate(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
-    result = calibrate_sasplanet(
-        Path(config["sasplanet_exe"]), root, float(config["automation"]["launch_timeout_seconds"])
+    settings = resolve_session_settings(config, root)
+    individual = [create_sls_session([area], settings).as_dict() for area in result.areas]
+    combined = create_sls_session(result.areas, settings).as_dict()
+    print(
+        _json(
+            {
+                "generated": outputs,
+                "sls": {"individual": individual, "combined": combined},
+                "inventory": _inventory_summary(result),
+                "network_download_started": False,
+            }
+        )
     )
-    print(_json({key: value for key, value in result.items() if key != "controls"}))
-    return 3 if result["status"].startswith("unexpected_dialog") else 0
+    return 0
+
+
+def command_session(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
+    result = _load_inventory(config, root)
+    _require_valid_inventory(result)
+    areas = _scope_from_args(args, result, config)
+    artifact, _, plan = _prepare_scope(areas, config, root)
+    print(_json({"status": "session_ready", "session": artifact.as_dict(), "plan": plan}))
+    return 0
 
 
 def command_plan(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
     result = _load_inventory(config, root)
-    plan = _plan_one(result, config, root, args.area)
+    _require_valid_inventory(result)
+    areas = _scope_from_args(args, result, config)
+    _, _, plan = _prepare_scope(areas, config, root)
     print(_json(plan))
     return 0
 
 
-def _run_dry(
-    result: InspectionResult,
+def _run_scope(
+    args: argparse.Namespace,
     config: dict[str, Any],
     root: Path,
-    state: WorkflowState,
-    area_code: str,
-) -> dict[str, Any]:
-    plan = _plan_one(result, config, root, area_code)
-    state.record_area(
-        area_code,
-        "dry_run_completed",
-        provider=plan["resolved_provider"]["name"],
-        zoom_levels=plan["zoom_levels"],
-        details={"plan_path": plan["plan_path"], "network_download_started": False},
+    areas: list[AreaRecord],
+) -> int:
+    artifact, _, plan = _prepare_scope(areas, config, root)
+    state = WorkflowState(root / "state" / "workflow.json")
+    if not bool(args.confirm_download):
+        _record_scope(
+            state,
+            areas,
+            "session_ready",
+            artifact,
+            {
+                "plan_path": plan["plan_path"],
+                "network_download_started": False,
+                "explicit_confirmation_required": True,
+            },
+        )
+        print(
+            _json(
+                {
+                    "status": "dry_run",
+                    "network_download_started": False,
+                    "session": artifact.as_dict(),
+                    "command_after_review": plan["command"],
+                }
+            )
+        )
+        return 0
+
+    process_id = launch_sls_session(Path(config["sasplanet_exe"]), Path(artifact.path))
+    details = {
+        "plan_path": plan["plan_path"],
+        "process_id": process_id,
+        "command": plan["command"],
+        "network_download_started": True,
+        "completion_is_reported_by_sasplanet": True,
+    }
+    _record_scope(state, areas, "download_launched", artifact, details)
+    print(
+        _json(
+            {
+                "status": "download_launched",
+                "process_id": process_id,
+                "session": artifact.as_dict(),
+                "command": plan["command"],
+            }
+        )
     )
-    return plan
+    return 0
 
 
 def command_run(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
     result = _load_inventory(config, root)
-    state = WorkflowState(root / "state" / "workflow.json")
-    explicit_real = bool(args.confirm_download)
-    dry_run = bool(args.dry_run) or (not explicit_real and bool(config["dry_run"]))
-    if dry_run:
-        plan = _run_dry(result, config, root, state, args.area)
-        print(_json({"status": "dry_run_completed", "network_download_started": False, "plan": plan}))
-        return 0
-
-    if not explicit_real:
-        raise ValueError("A real run requires the explicit --confirm-download flag")
-    if args.area != "9101":
-        raise ValueError("The first real validation run is restricted to area 9101")
-    plan = _plan_one(result, config, root, args.area)
-    state.record_area(
-        args.area,
-        "confirmed_pending_calibrated_actions",
-        provider=plan["resolved_provider"]["name"],
-        zoom_levels=plan["zoom_levels"],
-        details={"explicit_confirmation_received": True, "network_download_started": False},
-    )
-    try:
-        driver = SASPlanetUIDriver(root / "state" / "calibration.json", root / "screenshots")
-        driver_result = driver.execute_confirmed_workflow(plan)
-    except CalibrationRequired as error:
-        state.record_area(
-            args.area,
-            "awaiting_calibration",
-            provider=plan["resolved_provider"]["name"],
-            zoom_levels=plan["zoom_levels"],
-            error=str(error),
-            details={"explicit_confirmation_received": True, "network_download_started": False},
-        )
-        print(_json({"status": "blocked_safely", "reason": str(error), "network_download_started": False}))
-        return 3
-    except UnexpectedWindow as error:
-        state.record_area(
-            args.area,
-            "failed_unexpected_window",
-            provider=plan["resolved_provider"]["name"],
-            zoom_levels=plan["zoom_levels"],
-            error=str(error),
-            details={"network_download_started": "unknown; inspect the diagnostic screenshot"},
-        )
-        print(_json({"status": "stopped_on_unexpected_window", "reason": str(error)}))
-        return 4
-    except Exception as error:
-        state.record_area(
-            args.area,
-            "failed",
-            provider=plan["resolved_provider"]["name"],
-            zoom_levels=plan["zoom_levels"],
-            error=str(error),
-            details={"network_download_started": "unknown; inspect SAS.Planet and logs"},
-        )
-        raise
-    output_paths: list[Path] = []
-    if config["export"]["enabled"]:
-        output_directory = root / "output" / args.area
-        output_paths = [path for path in output_directory.rglob("*") if path.is_file()]
-        output_errors = validate_output_files(output_paths)
-        if output_errors:
-            state.record_area(
-                args.area,
-                "failed",
-                provider=plan["resolved_provider"]["name"],
-                zoom_levels=plan["zoom_levels"],
-                output_paths=[str(path.resolve()) for path in output_paths],
-                error="; ".join(output_errors),
-                details=driver_result,
-            )
-            raise RuntimeError("Output validation failed: " + "; ".join(output_errors))
-    state.record_area(
-        args.area,
-        "completed",
-        provider=plan["resolved_provider"]["name"],
-        zoom_levels=plan["zoom_levels"],
-        output_paths=[str(path.resolve()) for path in output_paths],
-        details={**driver_result, "export_enabled": bool(config["export"]["enabled"])},
-    )
-    print(_json({"status": "completed", "area_code": args.area, "outputs": [str(path) for path in output_paths]}))
-    return 0
+    _require_valid_inventory(result)
+    return _run_scope(args, config, root, [_find_area(result, args.area)])
 
 
 def command_run_all(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
-    if not args.dry_run:
-        raise ValueError("Bulk real downloads are not implemented or permitted in this initial toolkit; use --dry-run")
     result = _load_inventory(config, root)
+    _require_valid_inventory(result)
+    return _run_scope(args, config, root, list(result.areas))
+
+
+def command_resume(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
+    result = _load_inventory(config, root)
+    _require_valid_inventory(result)
+    areas = _scope_from_args(args, result, config)
+    settings = resolve_session_settings(config, root)
+    session_path = session_path_for(settings, areas)
+    if not session_path.is_file():
+        raise FileNotFoundError(
+            f"Prepared SLS session not found: {session_path}. Run the matching session command first."
+        )
+    errors = validate_sls_session(session_path)
+    if errors:
+        raise ValueError("Stored SLS session is invalid: " + "; ".join(errors))
+    command = sasplanet_command(Path(config["sasplanet_exe"]), session_path)
+    if not bool(args.confirm_download):
+        print(
+            _json(
+                {
+                    "status": "resume_dry_run",
+                    "network_download_started": False,
+                    "session": str(session_path),
+                    "command_after_review": command,
+                    "note": "Existing cached tiles will be skipped because ReplaceExistTiles=0.",
+                }
+            )
+        )
+        return 0
+    process_id = launch_sls_session(Path(config["sasplanet_exe"]), session_path)
     state = WorkflowState(root / "state" / "workflow.json")
-    if state.status_for("9101") != "dry_run_completed":
-        raise ValueError("Run and validate the area 9101 dry run before planning all areas")
-    plans = []
-    for area in result.areas:
-        plans.append(_run_dry(result, config, root, state, area.area_code))
-    print(_json({"status": "dry_run_completed", "areas": [plan["area"]["area_code"] for plan in plans],
-                 "network_download_started": False}))
+    digest = hashlib.sha256(session_path.read_bytes()).hexdigest()
+    for area in areas:
+        state.record_area(
+            area.area_code,
+            "download_relaunched",
+            provider=settings.provider.name,
+            zoom_levels=list(settings.zoom_levels),
+            output_paths=[str(session_path.resolve())],
+            details={"process_id": process_id, "session_sha256": digest, "command": command},
+        )
+    print(_json({"status": "download_relaunched", "process_id": process_id, "command": command}))
     return 0
 
 
@@ -236,20 +290,21 @@ def command_status(args: argparse.Namespace, config: dict[str, Any], root: Path)
     return 0
 
 
-def command_resume(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
-    if not config["dry_run"]:
-        raise ValueError("Automatic resume is allowed only while config.yaml has dry_run: true")
-    result = _load_inventory(config, root)
-    state = WorkflowState(root / "state" / "workflow.json")
-    configured_codes = [str(code) for code in config["area_codes"]]
-    area_code = state.next_incomplete(configured_codes)
-    if area_code is None:
-        print(_json({"status": "nothing_to_resume", "area_codes": configured_codes}))
-        return 0
-    plan = _run_dry(result, config, root, state, area_code)
-    print(_json({"status": "dry_run_resumed", "area_code": area_code, "plan": plan,
-                 "network_download_started": False}))
-    return 0
+def _add_scope_arguments(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--area", choices=sorted(EXPECTED_AREA_CODES))
+    group.add_argument("--configured", action="store_true", help="Use area_codes from config.yaml")
+    group.add_argument("--all", action="store_true", help="Use every verified polygon in the KMZ")
+
+
+def _add_run_mode(parser: argparse.ArgumentParser) -> None:
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Prepare and validate the SLS without launching")
+    mode.add_argument(
+        "--confirm-download",
+        action="store_true",
+        help="Explicitly launch SAS.Planet with --sls-autostart (may use the network)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -258,40 +313,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("inspect", help="Inspect and validate the source KMZ")
-    subparsers.add_parser("generate", help="Generate manifests, GeoJSON, and clean KML files")
+    subparsers.add_parser("generate", help="Generate manifests, clean KML/GeoJSON, and all SLS files")
 
-    earth = subparsers.add_parser("earth-open", help="Open generated KML in Google Earth Pro")
-    earth_group = earth.add_mutually_exclusive_group(required=True)
-    earth_group.add_argument("--area", choices=sorted(EXPECTED_AREA_CODES))
-    earth_group.add_argument("--all", action="store_true")
+    session = subparsers.add_parser("session", help="Generate and validate an SLS without launching SAS.Planet")
+    _add_scope_arguments(session)
+    plan = subparsers.add_parser("plan", help="Generate an SLS and a no-network download plan")
+    _add_scope_arguments(plan)
 
-    subparsers.add_parser("calibrate", help="Safely inspect SAS.Planet UI without downloading")
-    plan = subparsers.add_parser("plan", help="Create a no-network plan for one area")
-    plan.add_argument("--area", required=True, choices=sorted(EXPECTED_AREA_CODES))
-
-    run = subparsers.add_parser("run", help="Run one area; dry-run unless explicitly confirmed")
+    run = subparsers.add_parser("run", help="Prepare one area; launch only with --confirm-download")
     run.add_argument("--area", required=True, choices=sorted(EXPECTED_AREA_CODES))
-    run_mode = run.add_mutually_exclusive_group()
-    run_mode.add_argument("--dry-run", action="store_true")
-    run_mode.add_argument("--confirm-download", action="store_true")
+    _add_run_mode(run)
+    run_all = subparsers.add_parser("run-all", help="Prepare all polygons in one SLS session")
+    _add_run_mode(run_all)
 
-    run_all = subparsers.add_parser("run-all", help="Plan all areas after the 9101 pilot dry run")
-    run_all.add_argument("--dry-run", action="store_true", required=True)
-    subparsers.add_parser("status", help="Show persisted workflow state")
-    subparsers.add_parser("resume", help="Safely resume configured dry-run areas")
+    resume = subparsers.add_parser("resume", help="Relaunch an existing SLS; cached tiles are skipped")
+    _add_scope_arguments(resume)
+    resume.add_argument("--confirm-download", action="store_true")
+    subparsers.add_parser("status", help="Show persisted launch state")
     return parser
 
 
 COMMANDS = {
     "inspect": command_inspect,
     "generate": command_generate,
-    "earth-open": command_earth_open,
-    "calibrate": command_calibrate,
+    "session": command_session,
     "plan": command_plan,
     "run": command_run,
     "run-all": command_run_all,
-    "status": command_status,
     "resume": command_resume,
+    "status": command_status,
 }
 
 
@@ -307,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Log: %s", log_path)
         return code
     except KeyboardInterrupt:
-        print("Stopped safely by Ctrl+C. No unknown dialog was dismissed.", file=sys.stderr)
+        print("Stopped by Ctrl+C.", file=sys.stderr)
         return 130
     except Exception as error:
         print(f"ERROR: {error}", file=sys.stderr)

@@ -1,3 +1,3 @@
-"""Safe SAS.Planet automation toolkit."""
+"""KMZ-to-SAS.Planet saved-session automation toolkit."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

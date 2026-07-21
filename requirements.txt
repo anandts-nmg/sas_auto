@@ -1,5 +1,1 @@
 PyYAML>=6.0.2,<7
-pywinauto>=0.6.9,<0.7
-PyAutoGUI>=0.9.54,<1
-Pillow>=11.0,<13
-pytest>=8.3,<10

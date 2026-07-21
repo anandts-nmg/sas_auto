@@ -1,0 +1,13 @@
+{
+  "config": {
+    "MD013": false
+  },
+  "gitignore": true,
+  "globs": [
+    "**/*.md"
+  ],
+  "ignores": [
+    ".venv/**",
+    "node_modules/**"
+  ]
+}

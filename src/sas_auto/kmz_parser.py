@@ -8,9 +8,10 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from collections import Counter
+from collections.abc import Iterable
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Iterable
+from typing import TypedDict
 from zipfile import BadZipFile, ZipFile
 
 from .geometry import (
@@ -24,9 +25,16 @@ from .geometry import (
 from .models import AreaRecord, InspectionResult
 from .validation import validate_areas
 
-
 KML_NAMESPACE = "http://www.opengis.net/kml/2.2"
 VERTEX_POINT_PATTERN = re.compile(r"^(?P<code>\d{4})_V(?P<number>\d+)$")
+
+
+class GeneratedOutputs(TypedDict):
+    areas_json: str
+    areas_csv: str
+    geojson: str
+    combined_kml: str
+    individual_kml: list[str]
 
 
 class MetadataTableParser(HTMLParser):
@@ -48,9 +56,10 @@ class MetadataTableParser(HTMLParser):
             self._buffer.append(data)
 
     def handle_endtag(self, tag: str) -> None:
-        if self._current_tag == tag.lower():
+        current_tag = self._current_tag
+        if current_tag is not None and current_tag == tag.lower():
             value = " ".join("".join(self._buffer).split())
-            self._cells.append((self._current_tag, value))
+            self._cells.append((current_tag, value))
             self._current_tag = None
             self._buffer = []
 
@@ -248,7 +257,7 @@ def _write_kml(path: Path, areas: Iterable[AreaRecord], document_name: str) -> N
     tree.write(path, encoding="utf-8", xml_declaration=True)
 
 
-def generate_outputs(result: InspectionResult, project_root: Path) -> dict[str, object]:
+def generate_outputs(result: InspectionResult, project_root: Path) -> GeneratedOutputs:
     """Generate clean, code-based outputs. The source KMZ is never opened for writing."""
     if result.errors:
         joined = "; ".join(item.message for item in result.errors)
@@ -290,10 +299,28 @@ def generate_outputs(result: InspectionResult, project_root: Path) -> dict[str, 
 
     csv_path = manifest_dir / "areas.csv"
     csv_fields = [
-        "tender_number", "area_code", "area_name", "placemark_name", "aimag", "soum", "area_hectares",
-        "declared_coordinate_count", "source_coordinate_count", "unique_coordinate_count", "geometry_type",
-        "coordinate_system", "polygon_closed", "bbox_min_longitude", "bbox_min_latitude", "bbox_max_longitude",
-        "bbox_max_latitude", "center_longitude", "center_latitude", "source_url", "closure_note", "repairs",
+        "tender_number",
+        "area_code",
+        "area_name",
+        "placemark_name",
+        "aimag",
+        "soum",
+        "area_hectares",
+        "declared_coordinate_count",
+        "source_coordinate_count",
+        "unique_coordinate_count",
+        "geometry_type",
+        "coordinate_system",
+        "polygon_closed",
+        "bbox_min_longitude",
+        "bbox_min_latitude",
+        "bbox_max_longitude",
+        "bbox_max_latitude",
+        "center_longitude",
+        "center_latitude",
+        "source_url",
+        "closure_note",
+        "repairs",
     ]
     with csv_path.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=csv_fields)

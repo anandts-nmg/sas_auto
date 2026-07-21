@@ -1,0 +1,12 @@
+{
+  "name": "sas-auto-quality-tools",
+  "private": true,
+  "scripts": {
+    "lint:markdown": "markdownlint-cli2",
+    "typecheck:pyright": "pyright"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "^0.23.1",
+    "pyright": "^1.1.411"
+  }
+}

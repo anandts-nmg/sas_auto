@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from math import asinh, atan, cos, degrees, floor, pi, radians, sinh, tan
+from math import asinh, floor, pi, radians, tan
 
 from .models import Bounds, Coordinate
 
@@ -68,7 +68,7 @@ def calculate_centroid(coordinates: list[Coordinate]) -> Coordinate:
     twice_area = 0.0
     longitude_sum = 0.0
     latitude_sum = 0.0
-    for first, second in zip(ring, ring[1:] + ring[:1]):
+    for first, second in zip(ring, ring[1:] + ring[:1], strict=True):
         cross = first.longitude * second.latitude - second.longitude * first.latitude
         twice_area += cross
         longitude_sum += (first.longitude + second.longitude) * cross
@@ -82,19 +82,6 @@ def calculate_centroid(coordinates: list[Coordinate]) -> Coordinate:
     return Coordinate(
         longitude_sum / (3.0 * twice_area),
         latitude_sum / (3.0 * twice_area),
-    )
-
-
-def buffered_bounds(bounds: Bounds, percent: float) -> Bounds:
-    if percent < 0:
-        raise ValueError("Buffer percent cannot be negative")
-    longitude_pad = (bounds.max_longitude - bounds.min_longitude) * percent / 100.0
-    latitude_pad = (bounds.max_latitude - bounds.min_latitude) * percent / 100.0
-    return Bounds(
-        max(-180.0, bounds.min_longitude - longitude_pad),
-        max(-85.05112878, bounds.min_latitude - latitude_pad),
-        min(180.0, bounds.max_longitude + longitude_pad),
-        min(85.05112878, bounds.max_latitude + latitude_pad),
     )
 
 

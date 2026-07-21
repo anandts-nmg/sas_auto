@@ -4,14 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sas-auto"
-version = "0.1.0"
-description = "Safe, resumable KMZ-to-SAS.Planet workflow for Windows"
+version = "0.2.0"
+description = "KMZ-to-SAS.Planet SLS download-session automation for Windows"
 requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0.2,<7",
-  "pywinauto>=0.6.9,<0.7",
-  "PyAutoGUI>=0.9.54,<1",
-  "Pillow>=11.0,<13",
 ]
 
 [project.scripts]
@@ -26,6 +23,33 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-markers = [
-  "gui: tests that launch or control Windows GUI applications",
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+  ".venv",
+  "generated",
+  "logs",
+  "output",
+  "state",
 ]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "C4", "PIE", "RUF", "SIM"]
+allowed-confusables = ["а", "г"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+mypy_path = "src"
+check_untyped_defs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+show_error_codes = true
+strict_equality = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_ignores = true

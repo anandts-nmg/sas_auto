@@ -9,13 +9,10 @@ from typing import Any
 
 from .models import AreaRecord, ValidationMessage
 
-
 EXPECTED_AREA_CODES = {str(value) for value in range(9101, 9121)}
 
 
-def validate_areas(
-    areas: list[AreaRecord], vertex_point_counts: Counter[str]
-) -> list[ValidationMessage]:
+def validate_areas(areas: list[AreaRecord], vertex_point_counts: Counter[str]) -> list[ValidationMessage]:
     messages: list[ValidationMessage] = []
     codes = [area.area_code for area in areas]
     code_counts = Counter(codes)
@@ -45,7 +42,10 @@ def validate_areas(
         if area.tender_number != "91":
             messages.append(
                 ValidationMessage(
-                    "error", "unexpected_tender_number", f"Tender number is {area.tender_number!r}; expected '91'.", code
+                    "error",
+                    "unexpected_tender_number",
+                    f"Tender number is {area.tender_number!r}; expected '91'.",
+                    code,
                 )
             )
         expected_suffix = int(code) - 9100 if code.isdigit() else -1
@@ -71,7 +71,9 @@ def validate_areas(
             )
         if len(area.coordinates) < 4:
             messages.append(
-                ValidationMessage("error", "too_few_polygon_coordinates", "Polygon has fewer than four coordinates.", code)
+                ValidationMessage(
+                    "error", "too_few_polygon_coordinates", "Polygon has fewer than four coordinates.", code
+                )
             )
         if not area.source_closed:
             messages.append(
@@ -136,23 +138,26 @@ def validate_config(config: dict[str, Any], project_root: Path) -> list[str]:
     if not isinstance(imagery, dict):
         errors.append("imagery must be a mapping")
     else:
-        sources = imagery.get("preferred_sources")
-        if not isinstance(sources, list) or not sources or not all(isinstance(item, str) and item.strip() for item in sources):
-            errors.append("imagery.preferred_sources must be a non-empty list of names")
+        source = imagery.get("source")
+        if not isinstance(source, str) or not source.strip():
+            errors.append("imagery.source must be a non-empty map name")
         zooms = imagery.get("zoom_levels")
-        if not isinstance(zooms, list) or not zooms or not all(isinstance(item, int) and 0 <= item <= 24 for item in zooms):
-            errors.append("imagery.zoom_levels must contain integers from 0 through 24")
-        buffer_percent = imagery.get("buffer_percent")
-        if not isinstance(buffer_percent, (int, float)) or not 0 <= buffer_percent <= 100:
-            errors.append("imagery.buffer_percent must be between 0 and 100")
-    automation = config.get("automation")
-    if not isinstance(automation, dict):
-        errors.append("automation must be a mapping")
+        if not isinstance(zooms, list) or not zooms or not all(type(item) is int and 1 <= item <= 24 for item in zooms):
+            errors.append("imagery.zoom_levels must contain integers from 1 through 24")
+        if not isinstance(imagery.get("download_missing_tiles_only"), bool):
+            errors.append("imagery.download_missing_tiles_only must be true or false")
+    sessions = config.get("sessions")
+    if not isinstance(sessions, dict):
+        errors.append("sessions must be a mapping")
     else:
-        for key in ("launch_timeout_seconds", "action_delay_seconds", "operation_timeout_seconds", "max_retries"):
-            value = automation.get(key)
-            if not isinstance(value, (int, float)) or value < 0:
-                errors.append(f"automation.{key} must be a non-negative number")
+        directory = sessions.get("directory")
+        if not isinstance(directory, str) or not directory.strip():
+            errors.append("sessions.directory must be a non-empty path")
+        if not isinstance(sessions.get("auto_close_at_finish"), bool):
+            errors.append("sessions.auto_close_at_finish must be true or false")
+        workers_count = sessions.get("workers_count")
+        if type(workers_count) is not int or not 1 <= workers_count <= 32:
+            errors.append("sessions.workers_count must be an integer from 1 through 32")
     input_value = config.get("input_kmz")
     if not isinstance(input_value, str) or not input_value.strip():
         errors.append("input_kmz must be a path")
@@ -162,21 +167,7 @@ def validate_config(config: dict[str, Any], project_root: Path) -> list[str]:
             input_path = project_root / input_path
         if not input_path.is_file():
             errors.append(f"input_kmz does not exist: {input_path}")
-    for key in ("sasplanet_exe", "google_earth_exe"):
-        value = config.get(key)
-        if value is not None and (not isinstance(value, str) or not Path(value).is_file()):
-            errors.append(f"{key} does not exist: {value}")
-    return errors
-
-
-def validate_output_files(paths: list[Path]) -> list[str]:
-    """Return validation errors for expected exports without changing any file."""
-    errors: list[str] = []
-    if not paths:
-        return ["No expected output files were supplied for validation"]
-    for path in paths:
-        if not path.is_file():
-            errors.append(f"Expected output does not exist: {path}")
-        elif path.stat().st_size <= 0:
-            errors.append(f"Expected output is empty: {path}")
+    sasplanet_value = config.get("sasplanet_exe")
+    if not isinstance(sasplanet_value, str) or not Path(sasplanet_value).is_file():
+        errors.append(f"sasplanet_exe does not exist: {sasplanet_value}")
     return errors
