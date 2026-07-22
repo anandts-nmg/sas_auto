@@ -1,5 +1,7 @@
 # SAS.Planet KMZ polygon imagery downloads and raster exports
 
+![Z16 imagery output for area 91_0010 with a 1 km buffer](91_0010__buffer_1km.png)
+
 This Windows project reads polygon features from KMZ files, separates them from
 point placemarks, writes native SAS.Planet saved download sessions (`.sls`), and
 exports downloaded SQLite cache tiles as polygon-masked, georeferenced rasters.
