@@ -1,6 +1,8 @@
 # SAS.Planet KMZ polygon imagery downloads and raster exports
 
-![Z16 imagery output for area 91_0010 with a 1 km buffer](91_0010__buffer_1km.png)
+| Natural-color Z16 preview | Diagnostic raster view |
+| :---: | :---: |
+| ![Natural-color Z16 preview for area 91_0003 with a 1 km buffer](91_0003___buffer_1km_preview.png) | ![Diagnostic Z16 raster view for area 91_0003 with a 1 km buffer](91_0003___buffer_1km.png) |
 
 This Windows project reads polygon features from KMZ files, separates them from
 point placemarks, writes native SAS.Planet saved download sessions (`.sls`), and
