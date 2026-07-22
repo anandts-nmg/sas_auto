@@ -43,7 +43,7 @@ def test_multi_download_requires_completed_pilot(project_root: Path, tmp_path: P
     isolated = deepcopy(config)
     isolated["dataset"]["namespace_outputs"] = False
     result = inspect_kmz(
-        project_root / "Selection_91_All_Areas.kmz",
+        project_root / "inputs" / "Selection_91_All_Areas.kmz",
         profile="selection_91",
         dataset_id="selection_91",
     )
@@ -58,7 +58,7 @@ def test_multi_download_requires_completed_pilot(project_root: Path, tmp_path: P
 
 
 def test_preparation_does_not_reset_completed_state(tmp_path: Path, project_root: Path) -> None:
-    result = inspect_kmz(project_root / "Selection_91_All_Areas.kmz")
+    result = inspect_kmz(project_root / "inputs" / "Selection_91_All_Areas.kmz")
     area = result.areas[0]
     state = WorkflowState(tmp_path / "workflow.json")
     state.record_area(area.area_code, "completed")
@@ -83,7 +83,7 @@ def test_preparation_does_not_reset_completed_state(tmp_path: Path, project_root
 def test_confirmed_run_refuses_unsafe_tile_scope_before_launch(
     tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    area = inspect_kmz(project_root / "Selection_91_All_Areas.kmz").areas[0]
+    area = inspect_kmz(project_root / "inputs" / "Selection_91_All_Areas.kmz").areas[0]
     artifact = SessionArtifact(
         path=str(tmp_path / "9101.sls"),
         sha256="0" * 64,

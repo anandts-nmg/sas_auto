@@ -10,6 +10,18 @@ dist/
 node_modules/
 inputs/*
 !inputs/.gitkeep
+!inputs/Selection_91_All_Areas.kmz
+configs/*.local.yaml
+!configs/.gitkeep
+
+# Keep the checked regression artifacts, but ignore namespaced artifacts made
+# from local inputs under generated/<dataset-id>/ and generated/sls/<dataset-id>/.
+generated/*/
+!generated/geojson/
+!generated/kml/
+!generated/manifest/
+!generated/sls/
+generated/sls/*/
 
 # Runtime artifacts (keep placeholder files only)
 logs/*

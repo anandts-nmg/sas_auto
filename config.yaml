@@ -1,4 +1,4 @@
-input_kmz: Selection_91_All_Areas.kmz
+input_kmz: inputs/Selection_91_All_Areas.kmz
 sasplanet_exe: 'C:\Users\anand.ts\Downloads\SAS.Planet.Release.260404.x64\SASPlanet.exe'
 
 dataset:

@@ -17,4 +17,4 @@ def project_root() -> Path:
 
 @pytest.fixture(scope="session")
 def actual_result(project_root: Path) -> InspectionResult:
-    return inspect_kmz(project_root / "Selection_91_All_Areas.kmz")
+    return inspect_kmz(project_root / "inputs" / "Selection_91_All_Areas.kmz")

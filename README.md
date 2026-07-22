@@ -4,7 +4,7 @@ This Windows project reads polygon features from KMZ files, separates them from
 point placemarks, writes native SAS.Planet saved download sessions (`.sls`), and
 exports downloaded SQLite cache tiles as polygon-masked, georeferenced rasters.
 The repository defaults to SAS.Planet Z16. The included
-`Selection_91_All_Areas.kmz` is the strict regression dataset: it contains 20
+`inputs\Selection_91_All_Areas.kmz` is the strict regression dataset: it contains 20
 tender polygons and 854 point placemarks. Other polygon KMZ files and zoom
 levels are configurable. SAS.Planet starts generated sessions with:
 
@@ -105,7 +105,7 @@ the virtual environment:
 The operative defaults in `config.yaml` are:
 
 ```yaml
-input_kmz: Selection_91_All_Areas.kmz
+input_kmz: inputs/Selection_91_All_Areas.kmz
 sasplanet_exe: 'C:\Users\anand.ts\Downloads\SAS.Planet.Release.260404.x64\SASPlanet.exe'
 
 dataset:
@@ -170,9 +170,10 @@ decision; the toolkit never adjusts them automatically.
 
 ### Use another KMZ
 
-Put local KMZ inputs under `inputs\`; its contents except `.gitkeep` are ignored
-by Git so large or private source files are not committed. Keep the included
-regression input at the repository root.
+Put KMZ inputs under `inputs\`. Local files are ignored by Git so large or
+private sources are not committed; the included
+`inputs\Selection_91_All_Areas.kmz` regression fixture is the one explicit
+exception and remains tracked for reproducible tests.
 
 ```powershell
 Copy-Item 'C:\path\to\Selection_92_All_Areas.kmz' '.\inputs\areas.kmz'
@@ -198,11 +199,13 @@ more detected IDs if you intend to use `--configured`. With
 exists in the input, or otherwise the first verified polygon.
 
 To keep several input configurations without repeatedly replacing
-`config.yaml`, pass a config path before the subcommand:
+`config.yaml`, create `configs\<name>.local.yaml` and pass it before the
+subcommand. Local configs are ignored by Git because they commonly contain
+machine paths or identify private input data:
 
 ```powershell
-.\scripts\run.ps1 --config .\configs\selection-92.yaml inspect
-.\scripts\run.ps1 --config .\configs\selection-92.yaml generate
+.\scripts\run.ps1 --config .\configs\selection-92.local.yaml inspect
+.\scripts\run.ps1 --config .\configs\selection-92.local.yaml generate
 ```
 
 Relative paths inside any selected config are resolved from the repository
@@ -235,6 +238,11 @@ Supported geometry/input behavior:
 - any number of unrelated point placemarks, which are inventory-only
 - multiple inputs processed one at a time with isolated generated, session,
   state, plan, and raster output directories
+
+Namespaced artifacts created from local inputs remain on disk but are ignored
+by Git. The checked `selection_91` regression artifacts under the standard
+`generated\geojson`, `generated\kml`, `generated\manifest`, and
+`generated\sls` paths remain tracked.
 
 LineStrings, point-only KMZ files, GroundOverlays, and non-WGS-84 coordinates
 are not converted into download polygons. The command stops with a clear error

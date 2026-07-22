@@ -3,7 +3,7 @@
   "dataset_id": "selection_91",
   "profile": "tender_areas",
   "input": {
-    "path": "C:\\Users\\anand.ts\\Downloads\\sas_auto\\Selection_91_All_Areas.kmz",
+    "path": "C:\\Users\\anand.ts\\Downloads\\sas_auto\\inputs\\Selection_91_All_Areas.kmz",
     "sha256": "279256266894164e505aec264174f8f12ca5c1146c69b445bdaf5758e47bad87",
     "archive_entries": [
       "doc.kml"
