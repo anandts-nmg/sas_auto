@@ -1,4 +1,0 @@
-ruff>=0.15.22,<0.16
-mypy>=2.3,<3
-types-PyYAML>=6.0.12,<7
-yamllint>=1.38,<2

@@ -34,7 +34,7 @@ Wait for SAS.Planet to finish, then run the matching `export` command.
 ## Prerequisites
 
 - Windows 11 and PowerShell 7
-- Python 3.11 or newer, including the Windows `py` launcher
+- `uv` for Python installation, locked dependencies, and the project environment
 - SAS.Planet with `--sls-autostart` support
 - a configured SAS.Planet SQLite cache
 - an enabled SAS.Planet imagery definition, such as `ESRI ArcGIS.Imagery`
@@ -51,6 +51,7 @@ The repository regression workflow was last verified on 2026-07-21 with:
 
 - Windows 11 and PowerShell 7
 - Python 3.13.14
+- uv 0.11.21
 - SAS.Planet `26.4.4.10916`:
   `C:\Users\anand.ts\Downloads\SAS.Planet.Release.260404.x64\SASPlanet.exe`
 - Installed map: `ESRI ArcGIS.Imagery`
@@ -86,16 +87,35 @@ different configuration or explicit paths without launching anything:
 
 ## Clone and set up
 
+Install `uv` once if it is not already available:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Clone and synchronize the locked project environment:
+
 ```powershell
 git clone https://github.com/anandts-nmg/sas_auto.git
 Set-Location .\sas_auto
 .\scripts\setup.ps1
 ```
 
-Runtime dependencies are PyYAML and Pillow. The setup script also installs the
-development lint and type-check tools, PSScriptAnalyzer, and the npm-based
-Markdown/Pyright tools. It creates `.venv` and installs this package in editable
-mode.
+The repository pins its development Python version in `.python-version` and its
+complete Python dependency resolution in `uv.lock`. The setup script runs
+`uv sync --locked --all-groups`, which creates `.venv`, installs the package in
+editable mode, and installs the Python lint, test, and type-check tools. It also
+installs PSScriptAnalyzer and the npm-locked Markdown/Pyright tools.
+
+For VS Code on Windows, point Python environment discovery at the executable,
+not only the `.venv` directory:
+
+```json
+"python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
+```
+
+After changing an existing workspace, run **Python: Select Interpreter**, choose
+`.venv\Scripts\python.exe`, and then run **Developer: Reload Window**.
 
 All CLI examples can be run through the PowerShell wrapper without activating
 the virtual environment:
@@ -529,7 +549,7 @@ schema:
 ## Tests and quality checks
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest
+uv run --locked pytest
 .\scripts\lint.ps1
 ```
 

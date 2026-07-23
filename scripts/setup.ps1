@@ -5,32 +5,36 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$venvPath = Join-Path $projectRoot '.venv'
-$pythonPath = Join-Path $venvPath 'Scripts\python.exe'
+$uvCommand = Get-Command uv -ErrorAction SilentlyContinue
 
-if (-not (Test-Path -LiteralPath $pythonPath)) {
-    Write-Output "Creating virtual environment at $venvPath"
-    & py -3 -m venv $venvPath
+if ($null -eq $uvCommand) {
+    throw 'uv is required. Install it from https://docs.astral.sh/uv/getting-started/installation/ and rerun setup.'
 }
 
-Write-Output 'Installing project dependencies'
-& $pythonPath -m pip install --upgrade pip
-& $pythonPath -m pip install -r (Join-Path $projectRoot 'requirements.txt')
-& $pythonPath -m pip install -r (Join-Path $projectRoot 'requirements-dev.txt')
-& $pythonPath -m pip install --no-deps --editable $projectRoot
+Push-Location $projectRoot
+try {
+    Write-Output 'Synchronizing locked Python dependencies with uv'
+    & $uvCommand.Source sync --locked --all-groups
+    if ($LASTEXITCODE -ne 0) { throw 'uv sync failed.' }
 
-if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
-    Write-Output 'Installing PSScriptAnalyzer for the current user'
-    Install-Module -Name PSScriptAnalyzer -RequiredVersion '1.25.0' -Scope CurrentUser -Force -SkipPublisherCheck
-}
+    if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+        Write-Output 'Installing PSScriptAnalyzer for the current user'
+        Install-Module -Name PSScriptAnalyzer -RequiredVersion '1.25.0' -Scope CurrentUser -Force -SkipPublisherCheck
+    }
 
-if (Get-Command npm -ErrorAction SilentlyContinue) {
-    Write-Output 'Installing Markdown lint dependencies'
-    & npm install --prefix $projectRoot
-}
-else {
-    throw 'Node.js/npm is required for Markdown linting.'
-}
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        Write-Output 'Installing locked Markdown and Pyright dependencies'
+        & npm ci --prefix $projectRoot
+        if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
+    }
+    else {
+        throw 'Node.js/npm is required for Markdown linting and Pyright.'
+    }
 
-Write-Output 'Setup complete.'
-& $pythonPath --version
+    Write-Output 'Setup complete.'
+    & $uvCommand.Source run --locked python --version
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to run Python through uv.' }
+}
+finally {
+    Pop-Location
+}

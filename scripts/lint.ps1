@@ -5,24 +5,24 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$pythonPath = Join-Path $projectRoot '.venv\Scripts\python.exe'
+$uvCommand = Get-Command uv -ErrorAction SilentlyContinue
 
-if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
-    throw "Virtual environment not found. Run .\scripts\setup.ps1 first."
+if ($null -eq $uvCommand) {
+    throw 'uv is required. Run .\scripts\setup.ps1 after installing uv.'
 }
 
 Push-Location $projectRoot
 try {
     Write-Output 'Ruff lint'
-    & $pythonPath -m ruff check .
+    & $uvCommand.Source run --locked ruff check .
     if ($LASTEXITCODE -ne 0) { throw 'Ruff lint failed.' }
 
     Write-Output 'Ruff format check'
-    & $pythonPath -m ruff format --check .
+    & $uvCommand.Source run --locked ruff format --check .
     if ($LASTEXITCODE -ne 0) { throw 'Ruff format check failed.' }
 
     Write-Output 'mypy'
-    & $pythonPath -m mypy
+    & $uvCommand.Source run --locked mypy
     if ($LASTEXITCODE -ne 0) { throw 'mypy failed.' }
 
     Write-Output 'Pyright/Pylance type check'
@@ -30,7 +30,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Pyright failed.' }
 
     Write-Output 'yamllint'
-    & $pythonPath -m yamllint config.yaml config.example.yaml .yamllint.yml
+    & $uvCommand.Source run --locked yamllint config.yaml config.example.yaml .yamllint.yml
     if ($LASTEXITCODE -ne 0) { throw 'yamllint failed.' }
 
     Write-Output 'PSScriptAnalyzer'

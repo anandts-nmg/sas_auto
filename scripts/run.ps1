@@ -8,14 +8,14 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$pythonPath = Join-Path $projectRoot '.venv\Scripts\python.exe'
-if (-not (Test-Path -LiteralPath $pythonPath)) {
-    throw "Virtual environment not found. Run .\scripts\setup.ps1 first."
+$uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+if ($null -eq $uvCommand) {
+    throw 'uv is required. Run .\scripts\setup.ps1 after installing uv.'
 }
 
 Push-Location $projectRoot
 try {
-    & $pythonPath -m sas_auto.cli @Arguments
+    & $uvCommand.Source run --locked python -m sas_auto.cli @Arguments
     exit $LASTEXITCODE
 }
 finally {
