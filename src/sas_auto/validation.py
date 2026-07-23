@@ -142,6 +142,7 @@ def validate_areas(
                     code,
                 )
             )
+        point_count = vertex_point_counts.get(code, 0)
         if (
             profile == "tender_areas"
             and area.source_closed
@@ -149,18 +150,25 @@ def validate_areas(
         ):
             closure_differences += 1
         elif profile == "tender_areas" and area.unique_coordinate_count != area.declared_coordinate_count:
+            point_markers_match = point_count == area.declared_coordinate_count
+            severity = "warning" if point_markers_match else "error"
+            marker_context = (
+                f" All {point_count} declared vertex-point placemarks are present."
+                if point_markers_match
+                else f" Found {point_count} vertex-point placemarks."
+            )
             messages.append(
                 ValidationMessage(
-                    "error",
+                    severity,
                     "declared_coordinate_count_mismatch",
                     (
                         f"Declared coordinate count is {area.declared_coordinate_count}, but the polygon has "
                         f"{area.unique_coordinate_count} non-closing vertices and {area.source_coordinate_count} source coordinates."
+                        f"{marker_context} The original polygon geometry is retained without repair."
                     ),
                     code,
                 )
             )
-        point_count = vertex_point_counts.get(code, 0)
         if profile == "tender_areas" and point_count != area.declared_coordinate_count:
             messages.append(
                 ValidationMessage(

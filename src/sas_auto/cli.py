@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .buffer_generator import create_buffered_kmz, default_output_path
 from .config import load_config, resolve_project_path
 from .kmz_parser import generate_outputs, inspect_kmz
 from .logging_setup import configure_logging
@@ -198,6 +199,25 @@ def command_generate(args: argparse.Namespace, config: dict[str, Any], root: Pat
             }
         )
     )
+    return 0
+
+
+def command_derive_buffer(args: argparse.Namespace, config: dict[str, Any], root: Path) -> int:
+    result = _load_inventory(config, root)
+    _require_valid_inventory(result)
+    buffer_meters = float(args.buffer_meters)
+    output_path = (
+        resolve_project_path(str(args.output), root)
+        if args.output is not None
+        else default_output_path(Path(result.input_path), buffer_meters)
+    )
+    created = create_buffered_kmz(
+        result,
+        output_path,
+        buffer_meters=buffer_meters,
+        overwrite=bool(args.overwrite),
+    )
+    print(_json(created))
     return 0
 
 
@@ -505,6 +525,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("inspect", help="Inspect and validate the source KMZ")
     subparsers.add_parser("list-features", help="List detected polygon feature IDs and names")
     subparsers.add_parser("generate", help="Generate manifests, clean KML/GeoJSON, and all SLS files")
+    derive_buffer = subparsers.add_parser(
+        "derive-buffer",
+        help="Create minimum rotated rectangles and metric mitre buffers as a new KMZ",
+    )
+    derive_buffer.add_argument("--buffer-meters", type=float, default=1000.0)
+    derive_buffer.add_argument("--output", type=Path, help="Derived KMZ path (default: beside the source KMZ)")
+    derive_buffer.add_argument("--overwrite", action="store_true", help="Replace an existing derived KMZ")
 
     session = subparsers.add_parser("session", help="Generate and validate an SLS without launching SAS.Planet")
     _add_scope_arguments(session)
@@ -530,6 +557,7 @@ COMMANDS = {
     "inspect": command_inspect,
     "list-features": command_list_features,
     "generate": command_generate,
+    "derive-buffer": command_derive_buffer,
     "session": command_session,
     "plan": command_plan,
     "run": command_run,

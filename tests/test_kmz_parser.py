@@ -45,6 +45,14 @@ def test_html_metadata_parsing() -> None:
     assert parse_html_metadata(html) == {"Талбай": "Уудавын булаг", "Код": "9101"}
 
 
+def test_html_metadata_parsing_supports_bold_keys_in_td_cells() -> None:
+    html = (
+        "<table><tr><td><b>Сонгон шалгаруулалт:</b></td><td>92</td></tr>"
+        "<tr><td><b>Аймаг:</b></td><td>Баян-Өлгий</td></tr></table>"
+    )
+    assert parse_html_metadata(html) == {"Сонгон шалгаруулалт": "92", "Аймаг": "Баян-Өлгий"}
+
+
 def _write_kmz(path: Path, kml: str, member: str = "doc.kml") -> Path:
     with ZipFile(path, "w") as archive:
         archive.writestr(member, kml)
@@ -98,9 +106,14 @@ def test_archive_without_polygon_is_rejected(tmp_path: Path) -> None:
 
 def test_auto_detects_non_91_tender_style_without_hardcoded_codes(tmp_path: Path) -> None:
     description = (
-        "<description><![CDATA[<table><tr><th>Сонгон шалгаруулалт</th><td>92</td></tr>"
-        "<tr><th>Код</th><td>9201</td></tr><tr><th>Талбай</th><td>Шинэ талбай</td></tr>"
-        "<tr><th>Координатын тоо</th><td>3</td></tr></table>]]></description>"
+        "<description><![CDATA[<table><tr><td><b>Сонгон шалгаруулалт:</b></td><td>92</td></tr>"
+        "<tr><td><b>Код:</b></td><td>СШ 9201</td></tr><tr><td><b>Талбай:</b></td><td>Шинэ талбай</td></tr>"
+        "<tr><td><b>Аймаг:</b></td><td>Баян-Өлгий</td></tr>"
+        "<tr><td><b>Сум:</b></td><td>Цэнгэл</td></tr>"
+        "<tr><td><b>Координатын тоо:</b></td><td>3</td></tr></table>]]></description>"
+        '<ExtendedData><Data name="selection_no"><value>92</value></Data>'
+        '<Data name="area_code"><value>9201</value></Data>'
+        '<Data name="area_name"><value>Шинэ талбай</value></Data></ExtendedData>'
     )
     path = _write_kmz(
         tmp_path / "Selection_92_All_Areas.kmz",
@@ -111,6 +124,47 @@ def test_auto_detects_non_91_tender_style_without_hardcoded_codes(tmp_path: Path
     assert result.dataset_id.startswith("selection_92_")
     assert len(result.dataset_id.rsplit("_", 1)[1]) == 8
     assert [area.feature_id for area in result.areas] == ["9201"]
+    assert result.areas[0].tender_number == "92"
+    assert result.areas[0].aimag == "Баян-Өлгий"
+    assert result.areas[0].soum == "Цэнгэл"
+    assert result.errors == []
+
+
+def test_dash_number_point_names_are_classified_as_vertices(tmp_path: Path) -> None:
+    path = _write_kmz(
+        tmp_path / "dash_vertices.kmz",
+        _generic_kml(
+            _polygon_placemark("Area A", "100,45 101,45 101,46 100,45"),
+            "<Placemark><name>area_a-001</name><Point><coordinates>100,45</coordinates></Point></Placemark>",
+            "<Placemark><name>Area A - Centroid</name><Point><coordinates>100.5,45.5</coordinates></Point></Placemark>",
+        ),
+    )
+    result = inspect_kmz(path)
+    assert result.vertex_point_count == 1
+    assert result.auxiliary_point_count == 1
+
+
+def test_closed_tender_polygon_count_mismatch_with_all_markers_is_a_warning(tmp_path: Path) -> None:
+    description = (
+        "<description><![CDATA[<table><tr><th>Сонгон шалгаруулалт</th><td>92</td></tr>"
+        "<tr><th>Код</th><td>9201</td></tr><tr><th>Талбай</th><td>Шинэ талбай</td></tr>"
+        "<tr><th>Координатын тоо</th><td>4</td></tr></table>]]></description>"
+    )
+    points = tuple(
+        f"<Placemark><name>9201-{number:03d}</name><Point><coordinates>100,45</coordinates></Point></Placemark>"
+        for number in range(1, 5)
+    )
+    path = _write_kmz(
+        tmp_path / "declared_mismatch.kmz",
+        _generic_kml(
+            _polygon_placemark("92_0001_Шинэ талбай", "100,45 101,45 101,46 100,45", extra=description),
+            *points,
+        ),
+    )
+    result = inspect_kmz(path)
+    mismatch = [message for message in result.warnings if message.code == "declared_coordinate_count_mismatch"]
+    assert len(mismatch) == 1
+    assert "original polygon geometry is retained without repair" in mismatch[0].message.lower()
     assert result.errors == []
 
 

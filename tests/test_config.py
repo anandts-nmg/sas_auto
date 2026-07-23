@@ -29,7 +29,7 @@ def test_project_configuration_is_valid(project_root: Path, tmp_path: Path) -> N
     assert config["dry_run"] is True
     assert config["area_codes"] == ["9101"]
     assert config["dataset"]["profile"] == "selection_91"
-    assert config["dataset"]["namespace_outputs"] is False
+    assert config["dataset"]["namespace_outputs"] is True
     assert config["imagery"]["source"] == "Esri World Imagery"
     assert config["imagery"]["zoom_levels"] == [16]
     assert config["imagery"]["download_missing_tiles_only"] is True

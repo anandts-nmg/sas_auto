@@ -135,7 +135,7 @@ sasplanet_exe: 'C:\Users\anand.ts\Downloads\SAS.Planet.Release.260404.x64\SASPla
 dataset:
   id: selection_91
   profile: selection_91
-  namespace_outputs: false
+  namespace_outputs: true
 
 parser:
   id_fields: [area_code, code, Код, id]
@@ -235,6 +235,31 @@ machine paths or identify private input data:
 Relative paths inside any selected config are resolved from the repository
 root, not from the config file's directory.
 
+### Create minimum rectangles with a metric buffer
+
+`derive-buffer` creates a new KMZ without modifying the configured source KMZ.
+For every verified source polygon it writes two polygon placemarks: the minimum
+rotated enclosing rectangle and that rectangle expanded by the requested metric
+distance with mitred corners. Each source feature uses a local
+azimuthal-equidistant CRS centered on its geometry, so `1000` means 1,000 metres
+rather than an approximate longitude/latitude offset.
+
+```powershell
+.\scripts\run.ps1 --config .\configs\selection-92.local.yaml derive-buffer `
+  --buffer-meters 1000 `
+  --output inputs\Selection_92_Rectangles_1km_Buffer.kmz
+```
+
+The command refuses to replace an existing file unless `--overwrite` is
+provided explicitly. Configure the derived KMZ as a separate namespaced
+dataset, inspect its feature IDs, and then use the normal pilot, batch download,
+and export workflow:
+
+```powershell
+.\scripts\run.ps1 --config .\configs\selection_92_rectangles_1km_buffer.local.yaml inspect
+.\scripts\run.ps1 --config .\configs\selection_92_rectangles_1km_buffer.local.yaml generate
+```
+
 `profile: auto` recognizes the tender-table pattern used by selection 91 and
 similar selections such as 92. Tender codes are read from metadata; they are not
 restricted to `9101`-`9120`. If those fields are absent, the parser switches to
@@ -264,13 +289,14 @@ Supported geometry/input behavior:
   state, plan, and raster output directories
 
 Namespaced artifacts created from local inputs remain on disk but are ignored
-by Git. The checked `selection_91` regression artifacts under the standard
-`generated\geojson`, `generated\kml`, `generated\manifest`, and
-`generated\sls` paths remain tracked.
+by Git. Selection 91 now uses the fixed `selection_91` namespace so its output
+cannot collide with another dataset.
 
 LineStrings, point-only KMZ files, GroundOverlays, and non-WGS-84 coordinates
-are not converted into download polygons. The command stops with a clear error
-instead of guessing a buffer or coordinate transformation.
+are not converted into download polygons. Normal inspect/generate commands stop
+with a clear error instead of guessing a buffer or coordinate transformation;
+metric rectangle buffering is performed only by the explicit `derive-buffer`
+command.
 Polygons beyond Web Mercator's approximately `+/-85.051129` degree latitude
 limit are also rejected because SAS.Planet's imagery tile matrix cannot
 represent them correctly.
@@ -330,13 +356,13 @@ This command performs no network download and does not launch SAS.Planet. It
 creates:
 
 ```text
-generated\manifest\areas.csv
-generated\manifest\areas.json
-generated\geojson\selection_91_areas.geojson
-generated\kml\9101.kml ... 9120.kml
-generated\kml\selection_91_areas.kml
-generated\sls\9101_ESRI_Z16.sls ... 9120_ESRI_Z16.sls
-generated\sls\ALL_KMZ_ESRI_Z16.sls
+generated\selection_91\manifest\areas.csv
+generated\selection_91\manifest\areas.json
+generated\selection_91\geojson\selection_91_areas.geojson
+generated\selection_91\kml\9101.kml ... 9120.kml
+generated\selection_91\kml\selection_91_areas.kml
+generated\sls\selection_91\9101_ESRI_Z16.sls ... 9120_ESRI_Z16.sls
+generated\sls\selection_91\ALL_KMZ_ESRI_Z16.sls
 ```
 
 Every `.sls` is written atomically and then parsed back for validation.
@@ -410,7 +436,7 @@ That executes the equivalent of:
 ```powershell
 & 'C:\Users\anand.ts\Downloads\SAS.Planet.Release.260404.x64\SASPlanet.exe' `
   --sls-autostart `
-  'C:\Users\anand.ts\Downloads\sas_auto\generated\sls\9101_ESRI_Z16.sls'
+  'C:\Users\anand.ts\Downloads\sas_auto\generated\sls\selection_91\9101_ESRI_Z16.sls'
 ```
 
 After the pilot download finishes, export and validate it:
@@ -473,12 +499,12 @@ The exporter discovers `SQLiteCache` from `SASPlanet.ini`, resolves
 intersecting the verified polygon. It then creates:
 
 ```text
-output\9101\9101.tif
-output\9101\9101.tfw
-output\9101\9101.prj
-output\9101\preview.png
-output\9101\validation.json
-output\9101\run-summary.txt
+output\selection_91\9101\9101.tif
+output\selection_91\9101\9101.tfw
+output\selection_91\9101\9101.prj
+output\selection_91\9101\preview.png
+output\selection_91\9101\validation.json
+output\selection_91\9101\run-summary.txt
 ```
 
 The GeoTIFF contains embedded EPSG:3857 pixel scale, tie point, and CRS keys. The
@@ -502,11 +528,11 @@ An all-area export continues past areas with missing cache tiles, records them a
 failed, and creates these aggregate files:
 
 ```text
-output\batch-summary.csv
-output\batch-summary.json
-output\batch-report.md
-output\checksums.sha256
-output\file-inventory.csv
+output\selection_91\batch-summary.csv
+output\selection_91\batch-summary.json
+output\selection_91\batch-report.md
+output\selection_91\checksums.sha256
+output\selection_91\file-inventory.csv
 ```
 
 Use `--configured` instead of `--all` to export only codes listed in
@@ -518,9 +544,9 @@ Use `--configured` instead of `--all` to export only codes listed in
 .\scripts\run.ps1 status
 ```
 
-Launch and validated-export state is written atomically to
-`state\workflow.json`. Plans are under `state\plans\`, and command logs are
-under `logs\`.
+Launch and validated-export state for Selection 91 is written atomically to
+`state\datasets\selection_91.json`. Its plans are under
+`state\plans\selection_91\`, and command logs are under `logs\`.
 
 For namespaced arbitrary inputs, state is written to
 `state\datasets\<dataset-id>.json`, and plans are written below

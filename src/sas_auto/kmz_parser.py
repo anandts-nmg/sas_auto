@@ -27,7 +27,7 @@ from .models import AreaRecord, Coordinate, InspectionResult, PolygonPart
 from .validation import EXPECTED_AREA_CODES, is_portable_windows_component, validate_areas
 
 KML_NAMESPACE = "http://www.opengis.net/kml/2.2"
-VERTEX_POINT_PATTERN = re.compile(r"^(?P<code>[A-Za-z0-9._-]+)_V(?P<number>\d+)$", re.IGNORECASE)
+VERTEX_POINT_PATTERN = re.compile(r"^(?P<code>[A-Za-z0-9._-]+?)(?:_V|-)(?P<number>\d+)$", re.IGNORECASE)
 SUPPORTED_PROFILES = {"auto", "selection_91", "tender_areas", "generic_polygons"}
 DEFAULT_ID_FIELDS = ("area_code", "code", "Код", "id")
 DEFAULT_NAME_FIELDS = ("area_name", "name", "Талбай")
@@ -52,10 +52,15 @@ class MetadataTableParser(HTMLParser):
         self._current_tag: str | None = None
         self._buffer: list[str] = []
         self._cells: list[tuple[str, str]] = []
+        self._current_row: list[tuple[str, str]] | None = None
+        self._rows: list[list[tuple[str, str]]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() in {"th", "td"}:
-            self._current_tag = tag.lower()
+        normalized_tag = tag.lower()
+        if normalized_tag == "tr":
+            self._current_row = []
+        elif normalized_tag in {"th", "td"}:
+            self._current_tag = normalized_tag
             self._buffer = []
 
     def handle_data(self, data: str) -> None:
@@ -63,19 +68,36 @@ class MetadataTableParser(HTMLParser):
             self._buffer.append(data)
 
     def handle_endtag(self, tag: str) -> None:
+        normalized_tag = tag.lower()
         current_tag = self._current_tag
-        if current_tag is not None and current_tag == tag.lower():
+        if current_tag is not None and current_tag == normalized_tag:
             value = " ".join("".join(self._buffer).split())
-            self._cells.append((current_tag, value))
+            cell = (current_tag, value)
+            self._cells.append(cell)
+            if self._current_row is not None:
+                self._current_row.append(cell)
             self._current_tag = None
             self._buffer = []
+        elif normalized_tag == "tr" and self._current_row is not None:
+            if self._current_row:
+                self._rows.append(self._current_row)
+            self._current_row = None
 
     def as_mapping(self) -> dict[str, str]:
         mapping: dict[str, str] = {}
+        for row in self._rows:
+            cells = [value for _, value in row if value]
+            if len(cells) >= 2:
+                key = cells[0].rstrip(":").strip()
+                if key:
+                    mapping[key] = cells[1]
+        if mapping:
+            return mapping
+
         pending_key: str | None = None
         for tag, value in self._cells:
             if tag == "th":
-                pending_key = value
+                pending_key = value.rstrip(":").strip()
             elif tag == "td" and pending_key is not None:
                 mapping[pending_key] = value
                 pending_key = None
@@ -97,10 +119,10 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _required(metadata: dict[str, str], key: str, placemark_name: str) -> str:
-    value = metadata.get(key, "").strip()
+def _required(metadata: dict[str, str], fields: tuple[str, ...], label: str, placemark_name: str) -> str:
+    value = _metadata_value(metadata, fields)
     if not value:
-        raise ValueError(f"Polygon {placemark_name!r} is missing description field {key!r}")
+        raise ValueError(f"Polygon {placemark_name!r} is missing description field {label!r}")
     return value
 
 
@@ -212,7 +234,7 @@ def _area_from_placemark(
             len(polygon.outer) - 1 if polygon.outer_source_closed else len(polygon.outer) for polygon in polygons
         )
         declared_count = _parse_optional_int(
-            _metadata_value(metadata, ("Координатын тоо", "coordinate_count")),
+            _metadata_value(metadata, ("Координатын тоо", "coordinate_count", "coord_count")),
             unique_outer_count,
         )
     except ValueError as error:
@@ -224,9 +246,14 @@ def _area_from_placemark(
         )
     placemark_id = (placemark.get("id") or "").strip()
     if profile == "tender_areas":
-        feature_id = _required(metadata, "Код", placemark_name)
-        area_name = _required(metadata, "Талбай", placemark_name)
-        tender_number = _required(metadata, "Сонгон шалгаруулалт", placemark_name)
+        feature_id = _required(metadata, ("area_code", "Код", "code"), "Код", placemark_name)
+        area_name = _required(metadata, ("area_name", "Талбай", "name"), "Талбай", placemark_name)
+        tender_number = _required(
+            metadata,
+            ("selection_no", "Сонгон шалгаруулалт", "tender_number"),
+            "Сонгон шалгаруулалт",
+            placemark_name,
+        )
         used_ids.add(feature_id.casefold())
     else:
         candidate = _metadata_value(metadata, id_fields) or placemark_id or placemark_name
@@ -238,8 +265,8 @@ def _area_from_placemark(
         area_code=feature_id,
         area_name=area_name,
         placemark_name=placemark_name,
-        aimag=_metadata_value(metadata, ("Аймаг", "aimag")),
-        soum=_metadata_value(metadata, ("Сум", "soum")),
+        aimag=_metadata_value(metadata, ("Аймаг", "aimag", "province")),
+        soum=_metadata_value(metadata, ("Сум", "soum", "district")),
         area_hectares=area_hectares,
         declared_coordinate_count=declared_count,
         coordinate_system=_metadata_value(metadata, ("Coordinate System", "coordinate_system", "crs"))
@@ -271,10 +298,15 @@ def _detect_profile(placemarks: list[ET.Element], requested: str) -> str:
         if placemark.findall(".//{*}Polygon"):
             description = placemark.findtext("{*}description") or ""
             polygon_metadata.append({**parse_html_metadata(description), **_extended_data(placemark)})
-    required = {"Сонгон шалгаруулалт", "Код", "Талбай"}
+    required_fields = (
+        ("Сонгон шалгаруулалт", "selection_no", "tender_number"),
+        ("Код", "area_code", "code"),
+        ("Талбай", "area_name", "name"),
+    )
     return (
         "tender_areas"
-        if polygon_metadata and all(required <= set(item) for item in polygon_metadata)
+        if polygon_metadata
+        and all(all(_metadata_value(item, fields) for fields in required_fields) for item in polygon_metadata)
         else "generic_polygons"
     )
 

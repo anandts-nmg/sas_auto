@@ -5,8 +5,8 @@ dataset:
   id: selection_91
   # selection_91 enforces the known 9101-9120 contract for this repository's source.
   profile: selection_91
-  # Preserve the existing generated/, output/, and state/ layout for this dataset.
-  namespace_outputs: false
+  # Keep Selection 91 artifacts isolated from other KMZ datasets.
+  namespace_outputs: true
 
 parser:
   id_fields:
